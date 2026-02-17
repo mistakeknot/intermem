@@ -1,0 +1,16 @@
+[project]
+name = "intermem"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[project.scripts]
+intermem-synthesize = "intermem.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
