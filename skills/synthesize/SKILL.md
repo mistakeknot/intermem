@@ -14,9 +14,14 @@ Run the intermem synthesis pipeline using the Python library:
 
 ### Running the Pipeline
 
+Find the intermem plugin install path and run from there:
+
 ```bash
-cd plugins/intermem && uv run python -m intermem --project-dir "$(pwd)"
+INTERMEM_DIR="$(find ~/.claude/plugins/cache -path '*/intermem/*/pyproject.toml' -printf '%h' -quit 2>/dev/null)"
+cd "$INTERMEM_DIR" && uv run python -m intermem --project-dir /path/to/project --json
 ```
+
+Replace `/path/to/project` with the actual project directory (usually the current working directory before cd).
 
 ### First Run Behavior
 
