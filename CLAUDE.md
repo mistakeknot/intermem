@@ -59,6 +59,7 @@ Secondary pipeline (Phase 2A): sweep → decay → demotion → (re-promotion on
 - **Citation idempotency**: `UNIQUE(entry_hash, citation_value)` + `ON CONFLICT DO UPDATE` prevents unbounded row growth across runs.
 - **Foreign keys**: `ON DELETE CASCADE` on citations and citation_checks → memory_entries.
 - **CHECK constraint**: New DBs enforce `status IN ('active', 'stale', 'orphaned', 'demoted')`. Existing DBs accept the values but may not have the CHECK (acceptable since all writes go through MetadataStore methods).
+- **Cold-start cap**: `--max-candidates N` (default 10) limits candidates per run, ranked by snapshot_count descending. Prevents overwhelming batch approval on first run against mature projects. Deferred entries are promoted on subsequent runs. Use `--max-candidates 0` for unlimited.
 
 ## Constraints
 

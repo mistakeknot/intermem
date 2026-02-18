@@ -11,7 +11,7 @@ from intermem.promoter import promote_entries
 from intermem.pruner import prune_promoted
 from intermem.scanner import MemoryEntry, scan_memory_dir
 from intermem.stability import StabilityStore, record_snapshot, score_entries
-from intermem._util import normalize_content
+from intermem._util import hash_entry, normalize_content
 
 
 @dataclass
@@ -28,6 +28,7 @@ class SynthesisResult:
     new_line_count: int
     validated_count: int = 0
     stale_filtered: int = 0
+    candidates_deferred: int = 0
 
 
 def _contains_promoted_content(target_path: Path, content: str) -> bool:
@@ -105,6 +106,7 @@ def run_synthesis(
     dry_run: bool = False,
     validate: bool = False,
     project_root: Path | None = None,
+    max_candidates: int = 0,
 ) -> SynthesisResult:
     """Run the full synthesis pipeline."""
     intermem_dir.mkdir(parents=True, exist_ok=True)
@@ -152,6 +154,8 @@ def run_synthesis(
     scores = score_entries(stability_store, scan.entries)
 
     stable = [score for score in scores if score.score == "stable"]
+    # Build hash→snapshot_count map for candidate ranking.
+    snapshot_counts = {hash_entry(s.entry): s.snapshot_count for s in stable}
     if not stable:
         return SynthesisResult(
             total_entries=len(scan.entries),
@@ -204,6 +208,16 @@ def run_synthesis(
         if item.status in {"novel", "fuzzy_duplicate"}
     ]
 
+    # Cap candidates to avoid cold-start flood on first promotion run.
+    # Rank by snapshot_count descending (longest-surviving entries first).
+    candidates_deferred = 0
+    if max_candidates > 0 and len(candidates) > max_candidates:
+        candidates.sort(
+            key=lambda e: snapshot_counts.get(hash_entry(e), 0), reverse=True
+        )
+        candidates_deferred = len(candidates) - max_candidates
+        candidates = candidates[:max_candidates]
+
     if not candidates:
         return SynthesisResult(
             total_entries=len(scan.entries),
@@ -216,6 +230,7 @@ def run_synthesis(
             new_line_count=scan.total_lines,
             validated_count=validated_count,
             stale_filtered=stale_filtered,
+            candidates_deferred=candidates_deferred,
         )
 
     approved = candidates if auto_approve else []
@@ -231,6 +246,7 @@ def run_synthesis(
             new_line_count=scan.total_lines,
             validated_count=validated_count,
             stale_filtered=stale_filtered,
+            candidates_deferred=candidates_deferred,
         )
 
     target = target_docs[0] if target_docs else None
@@ -246,6 +262,7 @@ def run_synthesis(
             new_line_count=scan.total_lines,
             validated_count=validated_count,
             stale_filtered=stale_filtered,
+            candidates_deferred=candidates_deferred,
         )
 
     promotion_result = promote_entries(approved, target, journal)
@@ -262,4 +279,5 @@ def run_synthesis(
         new_line_count=prune_result.new_total_lines,
         validated_count=validated_count,
         stale_filtered=stale_filtered,
+        candidates_deferred=candidates_deferred,
     )

@@ -56,6 +56,8 @@ def main() -> None:
     parser.add_argument("--validate", action="store_true", help="Validate citations in the synthesis pipeline")
     parser.add_argument("--no-validate", action="store_true", help="Skip citation validation")
     parser.add_argument("--validate-only", action="store_true", help="Standalone mode: validate already-promoted entries")
+    parser.add_argument("--max-candidates", type=int, default=10,
+                        help="Max candidates per run (0=unlimited, default=10)")
 
     # Phase 2A subcommands (optional — no subcommand falls through to synthesis).
     subparsers = parser.add_subparsers(dest="command")
@@ -228,6 +230,7 @@ def main() -> None:
         dry_run=args.dry_run,
         validate=do_validate,
         project_root=project_root if do_validate else None,
+        max_candidates=args.max_candidates,
     )
 
     if args.json:
@@ -244,6 +247,7 @@ def main() -> None:
                     "new_line_count": result.new_line_count,
                     "validated_count": result.validated_count,
                     "stale_filtered": result.stale_filtered,
+                    "candidates_deferred": result.candidates_deferred,
                 },
                 indent=2,
             )
@@ -261,6 +265,8 @@ def main() -> None:
         )
         if result.stale_filtered:
             print(f"  Filtered {result.stale_filtered} stale entries (broken citations).")
+        if result.candidates_deferred:
+            print(f"  Deferred {result.candidates_deferred} lower-priority candidates to next run.")
         print(f"Auto-memory: {result.new_line_count} lines remaining.")
         return
 
@@ -268,6 +274,8 @@ def main() -> None:
         msg = f"Found {result.candidates_count} candidates (skipped {result.duplicates_skipped} duplicates)."
         if result.stale_filtered:
             msg += f" Filtered {result.stale_filtered} stale."
+        if result.candidates_deferred:
+            msg += f" Deferred {result.candidates_deferred} to next run."
         print(msg)
         return
 

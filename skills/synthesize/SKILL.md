@@ -36,6 +36,7 @@ Additional flags:
 - `--no-validate` — Skip citation validation (Phase 0.5 behavior)
 - `--validate-only` — Standalone mode: check already-promoted entries and report stale ones
 - `--project-root /path` — Override project root for citation resolution (default: --project-dir value)
+- `--max-candidates N` — Cap candidates per run (default 10, 0=unlimited). Deferred entries promote on subsequent runs
 
 ### First Run Behavior
 

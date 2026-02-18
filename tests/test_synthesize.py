@@ -268,3 +268,182 @@ def test_synthesis_result_includes_validation_fields(tmp_path: Path) -> None:
     assert hasattr(result, "stale_filtered")
     assert result.validated_count == 0
     assert result.stale_filtered == 0
+
+
+# -- Cold-start flood capping tests --
+
+
+def test_max_candidates_caps_promotion_count(tmp_path: Path) -> None:
+    """When max_candidates is set, only that many entries are promoted."""
+    env = _setup_project(
+        tmp_path,
+        "## Facts\n- Fact A\n- Fact B\n- Fact C\n- Fact D\n- Fact E\n",
+        "# Project\n\n## Facts\n",
+    )
+    for _ in range(2):
+        run_synthesis(
+            memory_dir=env["memory_dir"],
+            target_docs=[env["agents_path"]],
+            intermem_dir=env["intermem_dir"],
+            auto_approve=True,
+        )
+
+    result = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+        max_candidates=2,
+    )
+    assert result.promoted_count == 2
+    assert result.candidates_deferred == 3
+    assert result.candidates_count == 2
+
+
+def test_max_candidates_zero_means_unlimited(tmp_path: Path) -> None:
+    """max_candidates=0 promotes all candidates (default behavior)."""
+    env = _setup_project(
+        tmp_path,
+        "## Facts\n- Fact A\n- Fact B\n- Fact C\n",
+        "# Project\n\n## Facts\n",
+    )
+    for _ in range(2):
+        run_synthesis(
+            memory_dir=env["memory_dir"],
+            target_docs=[env["agents_path"]],
+            intermem_dir=env["intermem_dir"],
+            auto_approve=True,
+        )
+
+    result = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+        max_candidates=0,
+    )
+    assert result.promoted_count == 3
+    assert result.candidates_deferred == 0
+
+
+def test_max_candidates_no_cap_when_under_limit(tmp_path: Path) -> None:
+    """When candidates <= max_candidates, no deferral happens."""
+    env = _setup_project(
+        tmp_path,
+        "## Facts\n- Fact A\n- Fact B\n",
+        "# Project\n\n## Facts\n",
+    )
+    for _ in range(2):
+        run_synthesis(
+            memory_dir=env["memory_dir"],
+            target_docs=[env["agents_path"]],
+            intermem_dir=env["intermem_dir"],
+            auto_approve=True,
+        )
+
+    result = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+        max_candidates=5,
+    )
+    assert result.promoted_count == 2
+    assert result.candidates_deferred == 0
+
+
+def test_max_candidates_ranks_by_snapshot_count(tmp_path: Path) -> None:
+    """Capping prefers entries with higher snapshot counts."""
+    env = _setup_project(
+        tmp_path,
+        "## Facts\n- Old fact\n",
+        "# Project\n\n## Facts\n",
+    )
+    # Run 3 times with "Old fact" to give it 3 snapshots.
+    for _ in range(2):
+        run_synthesis(
+            memory_dir=env["memory_dir"],
+            target_docs=[env["agents_path"]],
+            intermem_dir=env["intermem_dir"],
+        )
+
+    # Now add a new fact; it'll have fewer snapshots.
+    (env["memory_dir"] / "MEMORY.md").write_text(
+        "## Facts\n- Old fact\n- New fact\n", encoding="utf-8"
+    )
+    # Run once more so "New fact" gets snapshot 1 (baseline already past).
+    run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+    )
+    # And again so "New fact" gets snapshot 2.
+    run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+    )
+    # And a third time for "New fact" to reach 3 snapshots = stable.
+    # "Old fact" now has 5 snapshots.
+    result = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+        max_candidates=1,
+    )
+    # Only 1 promoted — should be "Old fact" (higher snapshot count).
+    assert result.promoted_count == 1
+    assert result.candidates_deferred == 1
+    agents_content = env["agents_path"].read_text(encoding="utf-8")
+    assert "Old fact" in agents_content
+    assert "New fact" not in agents_content
+
+
+def test_max_candidates_deferred_promoted_on_next_run(tmp_path: Path) -> None:
+    """Deferred candidates are promoted on subsequent runs."""
+    env = _setup_project(
+        tmp_path,
+        "## Facts\n- Fact A\n- Fact B\n- Fact C\n",
+        "# Project\n\n## Facts\n",
+    )
+    for _ in range(2):
+        run_synthesis(
+            memory_dir=env["memory_dir"],
+            target_docs=[env["agents_path"]],
+            intermem_dir=env["intermem_dir"],
+            auto_approve=True,
+        )
+
+    # First capped run: promote 1, defer 2.
+    r1 = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+        max_candidates=1,
+    )
+    assert r1.promoted_count == 1
+    assert r1.candidates_deferred == 2
+
+    # Second capped run: promote 1 more, defer 1.
+    r2 = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+        max_candidates=1,
+    )
+    assert r2.promoted_count == 1
+    assert r2.candidates_deferred == 1
+
+    # Third run: promote last one.
+    r3 = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+        max_candidates=1,
+    )
+    assert r3.promoted_count == 1
+    assert r3.candidates_deferred == 0
