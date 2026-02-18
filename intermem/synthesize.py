@@ -141,9 +141,11 @@ def run_synthesis(
             new_line_count=scan.total_lines,
         )
 
-    # Score before recording current snapshot so stability requires prior history.
-    scores = score_entries(stability_store, scan.entries)
+    # Record current snapshot first, then score including it.
+    # First run is baseline (returns above). Stability requires 3+ appearances,
+    # so: run 1 = baseline, run 2 = 2 snapshots, run 3 = 3 snapshots = stable.
     record_snapshot(stability_store, scan.entries)
+    scores = score_entries(stability_store, scan.entries)
 
     stable = [score for score in scores if score.score == "stable"]
     if not stable:
@@ -158,7 +160,20 @@ def run_synthesis(
             new_line_count=scan.total_lines,
         )
 
-    stable_entries = [score.entry for score in stable]
+    # Exclude pointer entries (file path references, not standalone facts).
+    stable_entries = [score.entry for score in stable if not score.entry.is_pointer]
+    if not stable_entries:
+        return SynthesisResult(
+            total_entries=len(scan.entries),
+            stable_entries=len(stable),
+            duplicates_skipped=0,
+            candidates_count=0,
+            promoted_count=0,
+            pruned_count=recovered_pruned,
+            baseline_recorded=False,
+            new_line_count=scan.total_lines,
+        )
+
     dedup_results = check_duplicates(stable_entries, target_docs)
     exact_dupes = [item for item in dedup_results if item.status == "exact_duplicate"]
     candidates = [

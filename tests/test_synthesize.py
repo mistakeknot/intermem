@@ -44,13 +44,14 @@ def test_first_run_builds_baseline(tmp_path: Path) -> None:
 
 
 def test_stable_entries_promoted_after_three_runs(tmp_path: Path) -> None:
-    """Entries stable across 3 snapshots are promoted on 4th run."""
+    """Entries stable across 3 runs are promoted on 3rd run."""
     env = _setup_project(
         tmp_path,
         "## Facts\n- Stable fact\n",
         "# Project\n\n## Facts\n",
     )
-    for _ in range(3):
+    # Run 1: baseline. Run 2: 2 snapshots (recent). Run 3: 3 snapshots (stable + promote).
+    for _ in range(2):
         run_synthesis(
             memory_dir=env["memory_dir"],
             target_docs=[env["agents_path"]],
@@ -98,7 +99,7 @@ def test_exact_duplicates_skipped(tmp_path: Path) -> None:
         "## Facts\n- Already there\n",
         "# Project\n\n## Facts\n- Already there\n",
     )
-    for _ in range(4):
+    for _ in range(3):
         result = run_synthesis(
             memory_dir=env["memory_dir"],
             target_docs=[env["agents_path"]],
@@ -117,7 +118,7 @@ def test_pruning_after_promotion(tmp_path: Path) -> None:
         "## Facts\n- Stable fact\n- Other fact\n",
         "# Project\n\n## Facts\n",
     )
-    for _ in range(3):
+    for _ in range(2):
         run_synthesis(
             memory_dir=env["memory_dir"],
             target_docs=[env["agents_path"]],
@@ -137,6 +138,34 @@ def test_pruning_after_promotion(tmp_path: Path) -> None:
     assert result.pruned_count > 0
     assert "- Stable fact" not in memory_content
     assert "- Other fact" not in memory_content
+
+
+def test_pointer_entries_excluded_from_promotion(tmp_path: Path) -> None:
+    """Pointer entries (file path references) are never promoted."""
+    env = _setup_project(
+        tmp_path,
+        "## Where Knowledge Lives\n- `docs/guides/foo.md` — hooks format\n\n## Facts\n- Real fact\n",
+        "# Project\n\n## Facts\n",
+    )
+    for _ in range(2):
+        run_synthesis(
+            memory_dir=env["memory_dir"],
+            target_docs=[env["agents_path"]],
+            intermem_dir=env["intermem_dir"],
+            auto_approve=True,
+        )
+
+    result = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+    )
+    agents_content = env["agents_path"].read_text(encoding="utf-8")
+    # The pointer should not be promoted, but the real fact should
+    assert "docs/guides/foo.md" not in agents_content
+    assert "- Real fact" in agents_content
+    assert result.promoted_count == 1
 
 
 def test_crash_recovery_prunes_incomplete_committed_entries(tmp_path: Path) -> None:

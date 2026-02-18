@@ -81,3 +81,38 @@ def test_marker_is_stripped_before_comparing(tmp_path):
     results = check_duplicates([entry], [agents])
     assert len(results) == 1
     assert results[0].status == "exact_duplicate"
+
+
+def test_keyword_overlap_catches_reformatted_content(tmp_path):
+    """Entry with same keywords in different format is caught by keyword overlap."""
+    agents = tmp_path / "AGENTS.md"
+    # Target has verbose prose about Oracle CLI
+    agents.write_text(
+        "# Project\n\n## Oracle CLI\n"
+        "- Oracle requires DISPLAY=:99 and CHROME_PATH=/usr/local/bin/google-chrome-wrapper\n"
+        "- Never use `> file` redirect with oracle — use `--write-output <path>` instead\n"
+        "- Never wrap oracle with external `timeout` — use `--timeout <seconds>` flag\n"
+    )
+    # Memory entry is a terse summary with the same keywords
+    entry = _entry(
+        "- Never use `> file` redirect — use `--write-output <path>` (browser mode uses console.log)",
+        section="Oracle CLI",
+    )
+    results = check_duplicates([entry], [agents])
+    assert results[0].status in ("exact_duplicate", "fuzzy_duplicate"), (
+        f"Expected duplicate detection, got {results[0].status} "
+        f"(confidence={results[0].confidence:.2f})"
+    )
+
+
+def test_truly_novel_entry_not_caught_by_keywords(tmp_path):
+    """Entry about a completely different topic is not caught by keyword overlap."""
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text(
+        "# Project\n\n## Build\n"
+        "- Run `make build` to compile the Go binary\n"
+        "- Run `make test` to execute the test suite\n"
+    )
+    entry = _entry("- tmux needs 3 layers: directory perms, socket perms, and server-access ACL")
+    results = check_duplicates([entry], [agents])
+    assert results[0].status == "novel"

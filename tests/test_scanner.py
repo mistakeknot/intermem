@@ -78,3 +78,29 @@ def test_scan_entry_has_line_range(tmp_path):
     result = scan_memory_dir(tmp_path)
     assert result.entries[0].source_file == "MEMORY.md"
     assert result.entries[0].start_line >= 1
+
+
+def test_scan_classifies_pointer_entries(tmp_path):
+    """Entries referencing file paths are classified as pointers."""
+    content = textwrap.dedent("""\
+        ## Where Knowledge Lives
+        - `docs/guides/plugin-troubleshooting.md` — hooks format, cache divergence
+        - `hub/clavain/AGENTS.md` — upstream sync, file mapping
+
+        ## Cross-Cutting Lessons
+        - Never use `> file` redirect — use `--write-output <path>`
+    """)
+    (tmp_path / "MEMORY.md").write_text(content)
+    result = scan_memory_dir(tmp_path)
+    assert len(result.entries) == 3
+    assert result.entries[0].is_pointer is True
+    assert result.entries[1].is_pointer is True
+    assert result.entries[2].is_pointer is False
+
+
+def test_scan_non_path_backtick_not_pointer(tmp_path):
+    """Entries with backtick code that aren't file paths are not pointers."""
+    content = "## Tips\n- Use `pytest -v` for verbose output\n"
+    (tmp_path / "MEMORY.md").write_text(content)
+    result = scan_memory_dir(tmp_path)
+    assert result.entries[0].is_pointer is False

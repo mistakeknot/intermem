@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+_POINTER_RE = re.compile(
+    r"^[-*]\s+`[^\s`]+(?:/[^\s`]+)+`\s*[—–-]",  # - `path/to/file` — description
+)
+
+
 @dataclass
 class MemoryEntry:
     """A single fact/entry parsed from auto-memory."""
@@ -14,6 +19,7 @@ class MemoryEntry:
     source_file: str
     start_line: int
     end_line: int
+    is_pointer: bool = False
 
 
 @dataclass
@@ -125,10 +131,14 @@ def _make_entry(
     while lines and not lines[-1].strip():
         lines.pop()
         end -= 1
+    content = "\n".join(lines)
+    first_line = lines[0] if lines else ""
+    is_pointer = bool(_POINTER_RE.match(first_line))
     return MemoryEntry(
-        content="\n".join(lines),
+        content=content,
         section=section,
         source_file=filename,
         start_line=start,
         end_line=end,
+        is_pointer=is_pointer,
     )
