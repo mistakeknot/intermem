@@ -65,3 +65,36 @@ def test_journal_multiple_entries(tmp_path):
     incomplete = journal.get_incomplete()
     assert len(incomplete) == 1
     assert incomplete[0].entry_hash == "hash2"
+
+
+# -- Phase 2A: Demotion journal --
+
+
+def test_record_demoted(tmp_path):
+    """Demoted status is accepted and persisted."""
+    journal = PromotionJournal(tmp_path / ".intermem" / "promotion-journal.jsonl")
+    journal.record_demoted("hash1", "AGENTS.md", "Section", "- Old fact")
+    demoted = journal.get_unresolved_demotions()
+    assert len(demoted) == 1
+    assert demoted[0].status == "demoted"
+    assert demoted[0].entry_hash == "hash1"
+
+
+def test_get_unresolved_demotions_excludes_committed(tmp_path):
+    """Committed demotions are not returned as unresolved."""
+    journal = PromotionJournal(tmp_path / ".intermem" / "promotion-journal.jsonl")
+    journal.record_demoted("hash1", "AGENTS.md", "Section", "- Fact")
+    journal.mark_demotion_committed("hash1")
+    demoted = journal.get_unresolved_demotions()
+    assert len(demoted) == 0
+
+
+def test_mark_demotion_committed(tmp_path):
+    """Demotion committed pairs with the demoted entry."""
+    journal = PromotionJournal(tmp_path / ".intermem" / "promotion-journal.jsonl")
+    journal.record_demoted("hash1", "AGENTS.md", "Section", "- Fact")
+    journal.mark_demotion_committed("hash1")
+
+    # Reload and verify
+    j2 = PromotionJournal(tmp_path / ".intermem" / "promotion-journal.jsonl")
+    assert len(j2.get_unresolved_demotions()) == 0

@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS memory_entries (
     confidence REAL NOT NULL DEFAULT 0.5,
     confidence_updated_at TEXT,
     status TEXT NOT NULL DEFAULT 'active'
-        CHECK(status IN ('active', 'stale', 'orphaned'))
+        CHECK(status IN ('active', 'stale', 'orphaned', 'demoted')),
+    stale_streak INTEGER NOT NULL DEFAULT 0,
+    demoted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS citations (
@@ -77,6 +79,7 @@ class MetadataStore:
                 "INSERT INTO schema_version (version, migration_version) VALUES (1, 0)"
             )
             self.conn.commit()
+        self._migrate_to_v2()
 
     def upsert_entry(
         self,
@@ -146,17 +149,34 @@ class MetadataStore:
         )
 
     def update_confidence(self, entry_hash: str, confidence: float) -> None:
-        """Set confidence and derive status from threshold."""
+        """Set confidence and derive status from threshold.
+
+        Preserves 'demoted' status — use reactivate_entry() for explicit re-promotion.
+        Auto-resets stale_streak on stale->active transition.
+        """
+        old_row = self.get_entry(entry_hash)
+        old_status = old_row["status"] if old_row else None
+
+        # Preserve demoted status — only reactivate_entry() changes it
+        if old_status == "demoted":
+            now = datetime.now(timezone.utc).isoformat()
+            self.conn.execute(
+                "UPDATE memory_entries SET confidence = ?, confidence_updated_at = ? "
+                "WHERE entry_hash = ?",
+                (confidence, now, entry_hash),
+            )
+            return
+
         status = "active" if confidence >= STALE_THRESHOLD else "stale"
         now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
-            """\
-            UPDATE memory_entries
-            SET confidence = ?, confidence_updated_at = ?, status = ?
-            WHERE entry_hash = ?
-            """,
+            "UPDATE memory_entries SET confidence = ?, confidence_updated_at = ?, status = ? "
+            "WHERE entry_hash = ?",
             (confidence, now, status, entry_hash),
         )
+        # Reset streak on stale->active transition
+        if old_status in ("stale", "orphaned") and status == "active":
+            self.reset_stale_streak(entry_hash)
 
     def get_stale_entries(self) -> list[dict]:
         """Return entries with confidence below the stale threshold."""
@@ -207,6 +227,82 @@ class MetadataStore:
         """Close the database connection."""
         self.conn.close()
 
+    # -- Phase 2A: Decay + Demotion --
+
+    def increment_stale_streak(self, entry_hash: str) -> None:
+        """Increment stale_streak counter for consecutive stale sweeps."""
+        self.conn.execute(
+            "UPDATE memory_entries SET stale_streak = stale_streak + 1 WHERE entry_hash = ?",
+            (entry_hash,),
+        )
+
+    def reset_stale_streak(self, entry_hash: str) -> None:
+        """Reset stale_streak to 0 (entry recovered or was healthy during sweep)."""
+        self.conn.execute(
+            "UPDATE memory_entries SET stale_streak = 0 WHERE entry_hash = ?",
+            (entry_hash,),
+        )
+
+    def mark_demoted(self, entry_hash: str) -> None:
+        """Mark entry as demoted (removed from target doc)."""
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE memory_entries SET status = 'demoted', demoted_at = ? WHERE entry_hash = ?",
+            (now, entry_hash),
+        )
+
+    def reactivate_entry(self, entry_hash: str) -> None:
+        """Reset a demoted entry to active status, clearing demotion markers."""
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            "UPDATE memory_entries SET status = 'active', stale_streak = 0, "
+            "demoted_at = NULL, confidence_updated_at = ? WHERE entry_hash = ?",
+            (now, entry_hash),
+        )
+
+    def search_entries(self, keywords: str) -> list[dict]:
+        """Search entries by keyword in content_preview or section.
+
+        Supports multiple space-separated keywords (AND logic).
+        Uses parameterized queries to prevent SQL injection.
+        """
+        if not keywords.strip():
+            return []
+        tokens = keywords.strip().split()
+        conditions = " AND ".join(
+            ["(content_preview LIKE ? OR section LIKE ?)" for _ in tokens]
+        )
+        params: list[str] = []
+        for token in tokens:
+            pattern = f"%{token}%"
+            params.extend([pattern, pattern])
+        rows = self.conn.execute(
+            f"SELECT * FROM memory_entries WHERE {conditions}",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_topics(self) -> list[dict]:
+        """Return topic summary: section name, entry count, average confidence.
+
+        Includes active and stale entries, excludes demoted/orphaned.
+        """
+        rows = self.conn.execute(
+            """\
+            SELECT section, COUNT(*) as entry_count, AVG(confidence) as avg_confidence
+            FROM memory_entries WHERE status IN ('active', 'stale')
+            GROUP BY section ORDER BY entry_count DESC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_demoted_entries(self) -> list[dict]:
+        """Return entries with demoted status."""
+        rows = self.conn.execute(
+            "SELECT * FROM memory_entries WHERE status = 'demoted'"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     # -- Migration helpers --
 
     def _table_exists(self, table_name: str) -> bool:
@@ -219,3 +315,21 @@ class MetadataStore:
     def _column_exists(self, table_name: str, column_name: str) -> bool:
         rows = self.conn.execute(f"PRAGMA table_info({table_name})").fetchall()
         return any(row["name"] == column_name for row in rows)
+
+    def _migrate_to_v2(self) -> None:
+        """Add Phase 2A columns: stale_streak, demoted_at (idempotent).
+
+        Note: The CHECK constraint on status is only enforced for new DBs.
+        Existing DBs (created before Phase 2A) accept 'demoted' status but
+        don't have CHECK enforcement. This is acceptable because all status
+        updates go through MetadataStore methods, not raw SQL.
+        """
+        if not self._column_exists("memory_entries", "stale_streak"):
+            self.conn.execute(
+                "ALTER TABLE memory_entries ADD COLUMN stale_streak INTEGER NOT NULL DEFAULT 0"
+            )
+        if not self._column_exists("memory_entries", "demoted_at"):
+            self.conn.execute(
+                "ALTER TABLE memory_entries ADD COLUMN demoted_at TEXT"
+            )
+        self.conn.commit()

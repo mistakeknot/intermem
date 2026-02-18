@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
-from intermem.synthesize import run_synthesis
+from intermem.journal import PromotionJournal
 from intermem.metadata import MetadataStore
-from intermem.validator import validate_promoted
+from intermem.promoter import demote_entries
+from intermem.synthesize import run_synthesis
+from intermem.validator import sweep_all_entries, validate_promoted
 
 
 def _find_memory_dir(project_dir: Path) -> Path | None:
@@ -39,54 +42,126 @@ def _find_target_docs(project_dir: Path) -> list[Path]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Intermem memory synthesis")
-    parser.add_argument(
-        "--project-dir",
-        type=Path,
-        default=Path.cwd(),
-        help="Project root directory",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would change without modifying files",
-    )
-    parser.add_argument(
-        "--auto-approve",
-        action="store_true",
-        help="Skip interactive approval (for testing)",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results as JSON",
-    )
-    parser.add_argument(
-        "--validate",
-        action="store_true",
-        help="Validate citations in the synthesis pipeline (or standalone with --validate-only)",
-    )
-    parser.add_argument(
-        "--no-validate",
-        action="store_true",
-        help="Skip citation validation",
-    )
-    parser.add_argument(
-        "--validate-only",
-        action="store_true",
-        help="Standalone mode: validate already-promoted entries and report",
-    )
-    parser.add_argument(
-        "--project-root",
-        type=Path,
-        default=None,
-        help="Project root for citation resolution (default: auto-detect)",
-    )
+    # Shared args available to main parser AND all subcommands.
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("--project-dir", type=Path, default=Path.cwd(), help="Project root directory")
+    shared.add_argument("--project-root", type=Path, default=None, help="Project root for citation resolution")
+    shared.add_argument("--json", action="store_true", help="Output results as JSON")
+
+    parser = argparse.ArgumentParser(description="Intermem memory synthesis", parents=[shared])
+
+    # Synthesis-specific args (stay on main parser for backward compat).
+    parser.add_argument("--dry-run", action="store_true", help="Show what would change without modifying files")
+    parser.add_argument("--auto-approve", action="store_true", help="Skip interactive approval (for testing)")
+    parser.add_argument("--validate", action="store_true", help="Validate citations in the synthesis pipeline")
+    parser.add_argument("--no-validate", action="store_true", help="Skip citation validation")
+    parser.add_argument("--validate-only", action="store_true", help="Standalone mode: validate already-promoted entries")
+
+    # Phase 2A subcommands (optional — no subcommand falls through to synthesis).
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser("sweep", parents=[shared], help="Re-validate all entries, apply decay, demote stale")
+
+    query_parser = subparsers.add_parser("query", parents=[shared], help="Query metadata database")
+    query_parser.add_argument("--search", type=str, help="Search entries by keyword")
+    query_parser.add_argument("--topics", action="store_true", help="List topics with counts")
+    query_parser.add_argument("--demoted", action="store_true", help="Show demoted entries")
+
     args = parser.parse_args()
 
     project_dir = args.project_dir.resolve()
     project_root = args.project_root.resolve() if args.project_root else project_dir
+    intermem_dir = project_dir / ".intermem"
 
+    # -- Sweep subcommand --
+    if args.command == "sweep":
+        try:
+            metadata_store = MetadataStore(intermem_dir / "metadata.db")
+        except sqlite3.DatabaseError as e:
+            print(f"Error: Database error: {e}", file=sys.stderr)
+            sys.exit(2)
+        journal = PromotionJournal(intermem_dir / "promotion-journal.jsonl")
+        sweep_result = sweep_all_entries(metadata_store, project_root, journal)
+
+        if sweep_result.entries_swept == 0:
+            print("No entries to sweep.")
+            metadata_store.close()
+            sys.exit(0)
+
+        demote_result = None
+        if sweep_result.demotion_candidates:
+            target_docs = _find_target_docs(project_dir)
+            demote_result = demote_entries(
+                sweep_result.demotion_candidates, metadata_store, target_docs, journal
+            )
+            metadata_store.conn.commit()
+
+        metadata_store.close()
+
+        if args.json:
+            output = {
+                "entries_swept": sweep_result.entries_swept,
+                "entries_decayed": sweep_result.entries_decayed,
+                "entries_marked_for_demotion": sweep_result.entries_marked_for_demotion,
+                "demotion_candidates": sweep_result.demotion_candidates,
+            }
+            if demote_result:
+                output["demoted_count"] = demote_result.demoted_count
+                output["files_modified"] = demote_result.files_modified
+            print(json.dumps(output, indent=2))
+        else:
+            print(f"Swept {sweep_result.entries_swept} entries.")
+            print(f"  Decayed: {sweep_result.entries_decayed}")
+            print(f"  Demotion candidates: {len(sweep_result.demotion_candidates)}")
+            if demote_result and demote_result.demoted_count > 0:
+                print(f"  Demoted: {demote_result.demoted_count} entries from "
+                      f"{len(demote_result.files_modified)} files")
+        sys.exit(0)
+
+    # -- Query subcommand --
+    if args.command == "query":
+        db_path = intermem_dir / "metadata.db"
+        if not db_path.exists():
+            print("Error: metadata.db not found. Run synthesis first.", file=sys.stderr)
+            sys.exit(2)
+        try:
+            metadata_store = MetadataStore(db_path)
+        except sqlite3.DatabaseError as e:
+            print(f"Error: Database error: {e}", file=sys.stderr)
+            sys.exit(2)
+
+        if args.search:
+            results = metadata_store.search_entries(args.search)
+        elif args.topics:
+            results = metadata_store.get_topics()
+        elif args.demoted:
+            results = metadata_store.get_demoted_entries()
+        else:
+            metadata_store.close()
+            print("Specify --search, --topics, or --demoted", file=sys.stderr)
+            sys.exit(1)
+
+        metadata_store.close()
+
+        if args.json:
+            print(json.dumps(results, indent=2))
+        else:
+            if not results:
+                print("No results.")
+            else:
+                for r in results:
+                    if args.search:
+                        print(f"  [{r.get('status', '?')}] {r.get('content_preview', '')} "
+                              f"(confidence: {r.get('confidence', 0):.2f})")
+                    elif args.topics:
+                        print(f"  {r['section']}: {r['entry_count']} entries "
+                              f"(avg confidence: {r.get('avg_confidence', 0):.2f})")
+                    elif args.demoted:
+                        print(f"  {r.get('content_preview', '')} "
+                              f"(demoted: {r.get('demoted_at', 'unknown')})")
+        sys.exit(0)
+
+    # -- Default: synthesis / validate-only (backward compatible) --
     target_docs = _find_target_docs(project_dir)
 
     # Standalone validate mode.

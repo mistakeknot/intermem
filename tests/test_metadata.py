@@ -221,6 +221,174 @@ class TestTransactions:
         assert entry is None
 
 
+class TestStaleStreak:
+    def test_increment_stale_streak(self, store):
+        store.upsert_entry("h1", "preview", "sec", "f.md")
+        store.conn.commit()
+        assert store.get_entry("h1")["stale_streak"] == 0
+
+        store.increment_stale_streak("h1")
+        store.conn.commit()
+        assert store.get_entry("h1")["stale_streak"] == 1
+
+        store.increment_stale_streak("h1")
+        store.conn.commit()
+        assert store.get_entry("h1")["stale_streak"] == 2
+
+    def test_reset_stale_streak(self, store):
+        store.upsert_entry("h1", "preview", "sec", "f.md")
+        store.increment_stale_streak("h1")
+        store.increment_stale_streak("h1")
+        store.conn.commit()
+        assert store.get_entry("h1")["stale_streak"] == 2
+
+        store.reset_stale_streak("h1")
+        store.conn.commit()
+        assert store.get_entry("h1")["stale_streak"] == 0
+
+
+class TestDemotion:
+    def test_mark_demoted(self, store):
+        store.upsert_entry("h1", "preview", "sec", "f.md")
+        store.mark_demoted("h1")
+        store.conn.commit()
+        entry = store.get_entry("h1")
+        assert entry["status"] == "demoted"
+        assert entry["demoted_at"] is not None
+
+    def test_reactivate_entry(self, store):
+        store.upsert_entry("h1", "preview", "sec", "f.md")
+        store.increment_stale_streak("h1")
+        store.increment_stale_streak("h1")
+        store.mark_demoted("h1")
+        store.conn.commit()
+
+        entry = store.get_entry("h1")
+        assert entry["status"] == "demoted"
+        assert entry["stale_streak"] == 2
+        assert entry["demoted_at"] is not None
+
+        store.reactivate_entry("h1")
+        store.conn.commit()
+        entry = store.get_entry("h1")
+        assert entry["status"] == "active"
+        assert entry["stale_streak"] == 0
+        assert entry["demoted_at"] is None
+
+    def test_update_confidence_preserves_demoted(self, store):
+        """Demoted entry stays demoted even when update_confidence gives good score."""
+        store.upsert_entry("h1", "preview", "sec", "f.md")
+        store.mark_demoted("h1")
+        store.conn.commit()
+
+        store.update_confidence("h1", 0.9)
+        store.conn.commit()
+        entry = store.get_entry("h1")
+        assert entry["status"] == "demoted"
+        assert entry["confidence"] == 0.9
+
+    def test_update_confidence_resets_streak_on_active(self, store):
+        """When entry transitions stale->active, stale_streak resets."""
+        store.upsert_entry("h1", "preview", "sec", "f.md")
+        store.update_confidence("h1", 0.1)  # stale
+        store.increment_stale_streak("h1")
+        store.conn.commit()
+        assert store.get_entry("h1")["stale_streak"] == 1
+
+        store.update_confidence("h1", 0.8)  # active again
+        store.conn.commit()
+        entry = store.get_entry("h1")
+        assert entry["status"] == "active"
+        assert entry["stale_streak"] == 0
+
+    def test_get_demoted_entries(self, store):
+        store.upsert_entry("h1", "good entry", "sec", "f.md")
+        store.upsert_entry("h2", "demoted entry", "sec", "f.md")
+        store.mark_demoted("h2")
+        store.upsert_entry("h3", "another good", "sec", "f.md")
+        store.conn.commit()
+
+        demoted = store.get_demoted_entries()
+        assert len(demoted) == 1
+        assert demoted[0]["entry_hash"] == "h2"
+
+
+class TestQueryMethods:
+    def test_search_entries(self, store):
+        store.upsert_entry("h1", "SQLite WAL mode", "Database", "f.md")
+        store.upsert_entry("h2", "Git workflow", "Git", "f.md")
+        store.upsert_entry("h3", "SQLite journal", "Database", "f.md")
+        store.conn.commit()
+
+        results = store.search_entries("SQLite")
+        assert len(results) == 2
+        hashes = {r["entry_hash"] for r in results}
+        assert hashes == {"h1", "h3"}
+
+    def test_search_entries_multiple_keywords(self, store):
+        store.upsert_entry("h1", "SQLite WAL mode", "Database", "f.md")
+        store.upsert_entry("h2", "SQLite journal", "Database", "f.md")
+        store.conn.commit()
+
+        results = store.search_entries("SQLite WAL")
+        assert len(results) == 1
+        assert results[0]["entry_hash"] == "h1"
+
+    def test_search_entries_empty_keywords(self, store):
+        store.upsert_entry("h1", "preview", "sec", "f.md")
+        store.conn.commit()
+        assert store.search_entries("") == []
+        assert store.search_entries("   ") == []
+
+    def test_search_entries_sql_injection(self, store):
+        """SQL injection attempt doesn't crash or corrupt."""
+        store.upsert_entry("h1", "normal entry", "sec", "f.md")
+        store.conn.commit()
+        results = store.search_entries("'; DROP TABLE memory_entries; --")
+        assert isinstance(results, list)
+        # Table still exists
+        assert store.get_entry("h1") is not None
+
+    def test_get_topics(self, store):
+        store.upsert_entry("h1", "fact 1", "Database", "f.md")
+        store.upsert_entry("h2", "fact 2", "Database", "f.md")
+        store.upsert_entry("h3", "fact 3", "Git", "f.md")
+        store.conn.commit()
+
+        topics = store.get_topics()
+        assert len(topics) == 2
+        db_topic = next(t for t in topics if t["section"] == "Database")
+        assert db_topic["entry_count"] == 2
+
+    def test_get_topics_excludes_demoted(self, store):
+        store.upsert_entry("h1", "active", "Database", "f.md")
+        store.upsert_entry("h2", "demoted", "Database", "f.md")
+        store.mark_demoted("h2")
+        store.conn.commit()
+
+        topics = store.get_topics()
+        db_topic = next(t for t in topics if t["section"] == "Database")
+        assert db_topic["entry_count"] == 1
+
+
+class TestMigrationV2:
+    def test_migrate_to_v2_adds_columns(self, store):
+        assert store._column_exists("memory_entries", "stale_streak")
+        assert store._column_exists("memory_entries", "demoted_at")
+
+    def test_migrate_to_v2_idempotent(self, store):
+        store._migrate_to_v2()
+        store._migrate_to_v2()
+        assert store._column_exists("memory_entries", "stale_streak")
+
+    def test_new_entry_has_zero_stale_streak(self, store):
+        store.upsert_entry("h1", "preview", "sec", "f.md")
+        store.conn.commit()
+        entry = store.get_entry("h1")
+        assert entry["stale_streak"] == 0
+        assert entry["demoted_at"] is None
+
+
 class TestMigrationHelpers:
     def test_table_exists(self, store):
         assert store._table_exists("memory_entries")
