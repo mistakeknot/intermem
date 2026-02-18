@@ -26,6 +26,8 @@ class SynthesisResult:
     pruned_count: int
     baseline_recorded: bool
     new_line_count: int
+    validated_count: int = 0
+    stale_filtered: int = 0
 
 
 def _contains_promoted_content(target_path: Path, content: str) -> bool:
@@ -101,6 +103,8 @@ def run_synthesis(
     intermem_dir: Path,
     auto_approve: bool = False,
     dry_run: bool = False,
+    validate: bool = False,
+    project_root: Path | None = None,
 ) -> SynthesisResult:
     """Run the full synthesis pipeline."""
     intermem_dir.mkdir(parents=True, exist_ok=True)
@@ -174,6 +178,24 @@ def run_synthesis(
             new_line_count=scan.total_lines,
         )
 
+    # Validate citations and filter stale entries.
+    validated_count = 0
+    stale_filtered = 0
+    if validate and project_root is not None:
+        from intermem.metadata import MetadataStore
+        from intermem.validator import validate_and_filter_entries
+
+        metadata_store = MetadataStore(intermem_dir / "metadata.db")
+        try:
+            val_result = validate_and_filter_entries(
+                stable_entries, metadata_store, project_root
+            )
+            stable_entries = val_result.validated_entries
+            validated_count = val_result.validated_count
+            stale_filtered = val_result.stale_count
+        finally:
+            metadata_store.close()
+
     dedup_results = check_duplicates(stable_entries, target_docs)
     exact_dupes = [item for item in dedup_results if item.status == "exact_duplicate"]
     candidates = [
@@ -192,6 +214,8 @@ def run_synthesis(
             pruned_count=recovered_pruned,
             baseline_recorded=False,
             new_line_count=scan.total_lines,
+            validated_count=validated_count,
+            stale_filtered=stale_filtered,
         )
 
     approved = candidates if auto_approve else []
@@ -205,6 +229,8 @@ def run_synthesis(
             pruned_count=recovered_pruned,
             baseline_recorded=False,
             new_line_count=scan.total_lines,
+            validated_count=validated_count,
+            stale_filtered=stale_filtered,
         )
 
     target = target_docs[0] if target_docs else None
@@ -218,6 +244,8 @@ def run_synthesis(
             pruned_count=recovered_pruned,
             baseline_recorded=False,
             new_line_count=scan.total_lines,
+            validated_count=validated_count,
+            stale_filtered=stale_filtered,
         )
 
     promotion_result = promote_entries(approved, target, journal)
@@ -232,4 +260,6 @@ def run_synthesis(
         pruned_count=recovered_pruned + prune_result.lines_removed,
         baseline_recorded=False,
         new_line_count=prune_result.new_total_lines,
+        validated_count=validated_count,
+        stale_filtered=stale_filtered,
     )

@@ -1,13 +1,13 @@
 """Promoter — writes approved entries to AGENTS.md/CLAUDE.md with journal tracking."""
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from intermem.journal import PromotionJournal
 from intermem.scanner import MemoryEntry
+from intermem._util import hash_content
 
 MARKER = "<!-- intermem -->"
 
@@ -19,10 +19,6 @@ class PromotionResult:
     promoted_count: int
     sections_modified: list[str]
     sections_created: list[str]
-
-
-def _hash_content(content: str) -> str:
-    return hashlib.sha256(content.strip().encode()).hexdigest()[:16]
 
 
 def promote_entries(
@@ -50,7 +46,7 @@ def promote_entries(
     all_hashes: list[str] = []
     for section_name, section_entries in by_section.items():
         for entry in section_entries:
-            entry_hash = _hash_content(entry.content)
+            entry_hash = hash_content(entry.content)
             journal.record_pending(entry_hash, target_path.name, section_name, entry.content)
             all_hashes.append(entry_hash)
 

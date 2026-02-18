@@ -23,6 +23,20 @@ cd "$INTERMEM_DIR" && uv run python -m intermem --project-dir /path/to/project -
 
 Replace `/path/to/project` with the actual project directory (usually the current working directory before cd).
 
+### Citation Validation (Phase 1)
+
+Add `--validate` to enable citation checking. Entries referencing deleted files/modules get filtered:
+
+```bash
+cd "$INTERMEM_DIR" && uv run python -m intermem --project-dir /path/to/project --validate --json
+```
+
+Additional flags:
+- `--validate` — Enable citation validation in the synthesis pipeline
+- `--no-validate` — Skip citation validation (Phase 0.5 behavior)
+- `--validate-only` — Standalone mode: check already-promoted entries and report stale ones
+- `--project-root /path` — Override project root for citation resolution (default: --project-dir value)
+
 ### First Run Behavior
 
 On first run (no `.intermem/stability.jsonl`), the scanner records a baseline snapshot. All entries are scored "recent" — none are promoted. The user must run synthesis again after a few more sessions to build history.

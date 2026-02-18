@@ -1,7 +1,6 @@
 """Stability detection via per-entry content hashing across snapshots."""
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import defaultdict
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from intermem.scanner import MemoryEntry
+from intermem._util import hash_entry
 
 
 @dataclass
@@ -51,11 +51,6 @@ class StabilityStore:
         return self._snapshots
 
 
-def _hash_entry(entry: MemoryEntry) -> str:
-    """Compute content hash for an entry."""
-    return hashlib.sha256(entry.content.strip().encode("utf-8")).hexdigest()[:16]
-
-
 def _iter_snapshot_hash_sections(snapshot: dict) -> list[tuple[str, str]]:
     """Extract (hash, section) pairs from a snapshot.
 
@@ -93,7 +88,7 @@ def record_snapshot(store: StabilityStore, entries: list[MemoryEntry]) -> None:
     """Record a new snapshot of current entries."""
     snapshot_entries: list[dict[str, str]] = []
     for entry in entries:
-        entry_hash = _hash_entry(entry)
+        entry_hash = hash_entry(entry)
         preview = entry.content[:80].replace("\n", " ")
         snapshot_entries.append(
             {
@@ -131,7 +126,7 @@ def score_entries(store: StabilityStore, entries: list[MemoryEntry]) -> list[Sta
 
     scores: list[StabilityScore] = []
     for entry in entries:
-        entry_hash = _hash_entry(entry)
+        entry_hash = hash_entry(entry)
         seen_indices = [idx for idx, hashes in enumerate(snapshot_hashes) if entry_hash in hashes]
         count = len(seen_indices)
 

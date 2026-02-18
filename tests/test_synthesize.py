@@ -193,3 +193,78 @@ def test_crash_recovery_prunes_incomplete_committed_entries(tmp_path: Path) -> N
 
     reloaded = PromotionJournal(env["intermem_dir"] / "promotion-journal.jsonl")
     assert reloaded.get_incomplete() == []
+
+
+# -- Phase 1 validation integration tests --
+
+
+def test_synthesis_with_validation_filters_stale(tmp_path: Path) -> None:
+    """End-to-end: entry with broken citation not promoted when validate=True."""
+    env = _setup_project(
+        tmp_path,
+        "## Facts\n- Edit `src/deleted.py` and `lib/gone.py` for changes\n",
+        "# Project\n\n## Facts\n",
+    )
+    # Run 3 times to reach stability.
+    for _ in range(2):
+        run_synthesis(
+            memory_dir=env["memory_dir"],
+            target_docs=[env["agents_path"]],
+            intermem_dir=env["intermem_dir"],
+            auto_approve=True,
+        )
+
+    result = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+        validate=True,
+        project_root=env["project_dir"],
+    )
+    # Stale entry should be filtered — not promoted.
+    assert result.validated_count > 0
+    assert result.stale_filtered > 0
+    assert result.promoted_count == 0
+
+
+def test_synthesis_validate_false_behaves_like_phase05(tmp_path: Path) -> None:
+    """Synthesis with validate=False passes stale entries through (Phase 0.5 behavior)."""
+    env = _setup_project(
+        tmp_path,
+        "## Facts\n- Edit `src/deleted.py` and `lib/gone.py` for changes\n",
+        "# Project\n\n## Facts\n",
+    )
+    for _ in range(2):
+        run_synthesis(
+            memory_dir=env["memory_dir"],
+            target_docs=[env["agents_path"]],
+            intermem_dir=env["intermem_dir"],
+            auto_approve=True,
+        )
+
+    result = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+        auto_approve=True,
+        validate=False,
+    )
+    # Without validation, stale entry passes through and gets promoted.
+    assert result.validated_count == 0
+    assert result.stale_filtered == 0
+    assert result.promoted_count == 1
+
+
+def test_synthesis_result_includes_validation_fields(tmp_path: Path) -> None:
+    """SynthesisResult always includes validated_count and stale_filtered."""
+    env = _setup_project(tmp_path, "## Facts\n- Fact A\n")
+    result = run_synthesis(
+        memory_dir=env["memory_dir"],
+        target_docs=[env["agents_path"]],
+        intermem_dir=env["intermem_dir"],
+    )
+    assert hasattr(result, "validated_count")
+    assert hasattr(result, "stale_filtered")
+    assert result.validated_count == 0
+    assert result.stale_filtered == 0
