@@ -1,6 +1,6 @@
 {
   "name": "intermem",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Memory synthesis — graduates stable auto-memory facts to AGENTS.md/CLAUDE.md",
   "author": {
     "name": "mistakeknot",
