@@ -42,13 +42,18 @@ def _find_target_docs(project_dir: Path) -> list[Path]:
 
 
 def main() -> None:
-    # Shared args available to main parser AND all subcommands.
-    shared = argparse.ArgumentParser(add_help=False)
-    shared.add_argument("--project-dir", type=Path, default=Path.cwd(), help="Project root directory")
-    shared.add_argument("--project-root", type=Path, default=None, help="Project root for citation resolution")
-    shared.add_argument("--json", action="store_true", help="Output results as JSON")
+    # Main parser gets shared args with real defaults.
+    parser = argparse.ArgumentParser(description="Intermem memory synthesis")
+    parser.add_argument("--project-dir", type=Path, default=Path.cwd(), help="Project root directory")
+    parser.add_argument("--project-root", type=Path, default=None, help="Project root for citation resolution")
+    parser.add_argument("--json", action="store_true", default=False, help="Output results as JSON")
 
-    parser = argparse.ArgumentParser(description="Intermem memory synthesis", parents=[shared])
+    # Subparser parent: same flags but SUPPRESS defaults so they don't
+    # overwrite values already parsed by the main parser.
+    sub_shared = argparse.ArgumentParser(add_help=False)
+    sub_shared.add_argument("--project-dir", type=Path, default=argparse.SUPPRESS)
+    sub_shared.add_argument("--project-root", type=Path, default=argparse.SUPPRESS)
+    sub_shared.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
 
     # Synthesis-specific args (stay on main parser for backward compat).
     parser.add_argument("--dry-run", action="store_true", help="Show what would change without modifying files")
@@ -62,9 +67,9 @@ def main() -> None:
     # Phase 2A subcommands (optional — no subcommand falls through to synthesis).
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("sweep", parents=[shared], help="Re-validate all entries, apply decay, demote stale")
+    subparsers.add_parser("sweep", parents=[sub_shared], help="Re-validate all entries, apply decay, demote stale")
 
-    query_parser = subparsers.add_parser("query", parents=[shared], help="Query metadata database")
+    query_parser = subparsers.add_parser("query", parents=[sub_shared], help="Query metadata database")
     query_parser.add_argument("--search", type=str, help="Search entries by keyword")
     query_parser.add_argument("--topics", action="store_true", help="List topics with counts")
     query_parser.add_argument("--demoted", action="store_true", help="Show demoted entries")
