@@ -1,0 +1,17 @@
+{
+  "ecosystem": "interverse",
+  "interbase_min_version": "1.0.0",
+  "ecosystem_only": false,
+  "standalone_features": [
+    "Auto-memory synthesis and promotion to reference docs",
+    "Time-based decay and demotion of stale entries"
+  ],
+  "integrated_features": [
+    { "feature": "Citation freshness from interwatch drift scores", "requires": "interwatch" },
+    { "feature": "Smart checkpoint synthesis from intercheck pressure", "requires": "intercheck" }
+  ],
+  "companions": {
+    "recommended": ["interwatch"],
+    "optional": ["intercheck"]
+  }
+}
