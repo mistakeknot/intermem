@@ -8,6 +8,5 @@
   },
   "skills": [
     "./skills/synthesize"
-  ],
-  "hooks": "./hooks/hooks.json"
+  ]
 }
