@@ -85,7 +85,7 @@ def test_scan_classifies_pointer_entries(tmp_path):
     content = textwrap.dedent("""\
         ## Where Knowledge Lives
         - `docs/guides/plugin-troubleshooting.md` — hooks format, cache divergence
-        - `hub/clavain/AGENTS.md` — upstream sync, file mapping
+        - `os/clavain/AGENTS.md` — upstream sync, file mapping
 
         ## Cross-Cutting Lessons
         - Never use `> file` redirect — use `--write-output <path>`

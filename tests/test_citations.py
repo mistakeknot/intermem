@@ -114,7 +114,7 @@ class TestExtractCitations:
         assert citations[0].type == "file_path"
 
     def test_classifies_directory_as_module(self):
-        entry = _entry("- The `hub/clavain` module orchestrates")
+        entry = _entry("- The `os/clavain` module orchestrates")
         citations = extract_citations(entry)
         assert citations[0].type == "module"
 
