@@ -10,6 +10,14 @@ The pipeline: scan memory files → detect stability (same fact confirmed across
 
 ## Installation
 
+First, add the [interagency marketplace](https://github.com/mistakeknot/interagency-marketplace) (one-time setup):
+
+```bash
+/plugin marketplace add mistakeknot/interagency-marketplace
+```
+
+Then install the plugin:
+
 ```bash
 /plugin install intermem
 ```
