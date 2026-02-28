@@ -1,3 +1,7 @@
+---
+description: "Memory Synthesis"
+---
+
 # Memory Synthesis
 
 Scan auto-memory for the current project, identify stable facts, and promote them to AGENTS.md/CLAUDE.md with user approval.
