@@ -7,6 +7,7 @@
     "email": "mistakeknot@vibeguider.org"
   },
   "skills": [
-    "./skills/synthesize"
+    "./skills/synthesize",
+    "./skills/tidy"
   ]
 }

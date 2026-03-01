@@ -7,8 +7,8 @@ Memory synthesis plugin — graduates stable auto-memory facts to curated refere
 - **Plugin manifest**: `.claude-plugin/plugin.json`
 - **Library**: `intermem/` (Python, run via `uv run`)
 - **State directory**: `.intermem/` in target project root
-- **Skills**: `/intermem:synthesize`, `/intermem:validate`
-- **CLI**: `uv run python -m intermem [--flags] [sweep|query]`
+- **Skills**: `/intermem:synthesize`, `/intermem:validate`, `/intermem:tidy`
+- **CLI**: `uv run python -m intermem [--flags] [sweep|query|tidy]`
 
 ## Architecture
 
@@ -25,6 +25,7 @@ Secondary pipeline (Phase 2A): sweep → decay → demotion → (re-promotion on
 - `intermem/promoter.py` — Write entries with hash-based markers, demote stale entries: `promote_entries()`, `demote_entries()`
 - `intermem/pruner.py` — Remove promoted entries from auto-memory
 - `intermem/journal.py` — WAL-style promotion/demotion journal for atomicity
+- `intermem/tidy.py` — Structural tidy: section extraction to topic files, stale count detection
 - `intermem/_util.py` — Shared utilities: `hash_entry()`, `hash_content()`, `normalize_content()`
 
 ## CLI Subcommands
@@ -33,6 +34,7 @@ Secondary pipeline (Phase 2A): sweep → decay → demotion → (re-promotion on
 - `intermem query --search <keyword>` — Search entries by keyword in content/section
 - `intermem query --topics` — List topic sections with entry counts and avg confidence
 - `intermem query --demoted` — Show demoted entries
+- `intermem tidy [--budget N] [--section-threshold N] [--apply]` — Structural tidy: extract oversized sections to topic files, detect stale counts
 - No subcommand — backward-compatible synthesis mode (all existing flags work)
 
 ## State Files
@@ -63,7 +65,7 @@ Secondary pipeline (Phase 2A): sweep → decay → demotion → (re-promotion on
 
 ## Constraints
 
-- No hooks (Clavain hook budget)
+- SessionStart hook nudges when MEMORY.md exceeds line budget (no auto-modification)
 - No MCP server (skill-only)
 - `.intermem/` must be in `.gitignore` for the target project
 - Python stdlib only (sqlite3 is stdlib)

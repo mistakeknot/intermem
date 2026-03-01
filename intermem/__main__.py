@@ -12,6 +12,7 @@ from intermem.journal import PromotionJournal
 from intermem.metadata import MetadataStore
 from intermem.promoter import demote_entries
 from intermem.synthesize import run_synthesis
+from intermem.tidy import detect_stale_counts, tidy_memory
 from intermem.validator import sweep_all_entries, validate_promoted
 
 
@@ -74,6 +75,11 @@ def main() -> None:
     query_parser.add_argument("--topics", action="store_true", help="List topics with counts")
     query_parser.add_argument("--demoted", action="store_true", help="Show demoted entries")
 
+    tidy_parser = subparsers.add_parser("tidy", parents=[sub_shared], help="Structural tidy: extract oversized sections, detect stale counts")
+    tidy_parser.add_argument("--budget", type=int, default=120, help="Max lines for MEMORY.md (default: 120)")
+    tidy_parser.add_argument("--section-threshold", type=int, default=15, help="Min section size to extract (default: 15)")
+    tidy_parser.add_argument("--apply", action="store_true", help="Apply changes (default: dry-run)")
+
     args = parser.parse_args()
 
     project_dir = args.project_dir.resolve()
@@ -123,6 +129,78 @@ def main() -> None:
             if demote_result and demote_result.demoted_count > 0:
                 print(f"  Demoted: {demote_result.demoted_count} entries from "
                       f"{len(demote_result.files_modified)} files")
+        sys.exit(0)
+
+    # -- Tidy subcommand --
+    if args.command == "tidy":
+        memory_dir = _find_memory_dir(project_dir)
+        if memory_dir is None:
+            print(f"No auto-memory directory found for {project_dir}")
+            sys.exit(1)
+
+        result = tidy_memory(
+            memory_dir,
+            budget=args.budget,
+            section_threshold=args.section_threshold,
+            apply=args.apply,
+        )
+
+        # Also run stale count detection with project context
+        result.stale_counts = detect_stale_counts(memory_dir, project_dir)
+
+        if args.json:
+            output = {
+                "memory_file": result.memory_file,
+                "total_lines": result.total_lines,
+                "budget": result.budget,
+                "under_budget": result.under_budget,
+                "new_line_count": result.new_line_count,
+                "extractions": [
+                    {
+                        "section": e.section,
+                        "slug": e.slug,
+                        "line_count": e.line_count,
+                        "skipped": e.skipped,
+                    }
+                    for e in result.extractions
+                ],
+                "stale_counts": [
+                    {
+                        "text": s.text,
+                        "stored_count": s.stored_count,
+                        "actual_count": s.actual_count,
+                        "source_file": s.source_file,
+                        "line_number": s.line_number,
+                    }
+                    for s in result.stale_counts
+                ],
+            }
+            print(json.dumps(output, indent=2))
+        else:
+            if result.under_budget:
+                print(f"MEMORY.md is {result.total_lines} lines (budget: {result.budget}) — under budget.")
+            else:
+                mode = "Applied" if args.apply else "Would extract (dry-run)"
+                print(f"MEMORY.md is {result.total_lines} lines (budget: {result.budget})")
+                for ext in result.extractions:
+                    if ext.skipped:
+                        print(f"  SKIP {ext.section} ({ext.line_count} lines) → {ext.slug}.md already exists")
+                    else:
+                        print(f"  {mode}: {ext.section} ({ext.line_count} lines) → {ext.slug}.md")
+                print(f"  Projected: {result.new_line_count} lines after extraction")
+                if not args.apply:
+                    print(f"\nRun with --apply to execute.")
+
+            if result.stale_counts:
+                print(f"\nStale counts detected:")
+                for sc in result.stale_counts:
+                    if sc.actual_count is not None:
+                        drift = sc.actual_count - sc.stored_count
+                        marker = "STALE" if drift != 0 else "OK"
+                        print(f"  [{marker}] \"{sc.text}\" → actual: {sc.actual_count} "
+                              f"(drift: {drift:+d}) in {sc.source_file}:{sc.line_number}")
+                    else:
+                        print(f"  [?] \"{sc.text}\" in {sc.source_file}:{sc.line_number} (not verifiable)")
         sys.exit(0)
 
     # -- Query subcommand --
