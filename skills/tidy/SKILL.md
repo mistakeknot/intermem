@@ -13,7 +13,7 @@ Structural housekeeping for auto-memory files. Extracts oversized sections from 
 Find the intermem plugin install path and run the tidy subcommand:
 
 ```bash
-INTERMEM_DIR="$(find ~/.claude/plugins/cache -path '*/intermem/*/pyproject.toml' -printf '%h' -quit 2>/dev/null)"
+INTERMEM_DIR="$(find ~/.claude/plugins/cache -path '*/intermem/*/pyproject.toml' -not -path '*/tests/*' -printf '%h\n' 2>/dev/null | sort -V | tail -1)"
 cd "$INTERMEM_DIR" && uv run python -m intermem tidy --project-dir /path/to/project --json
 ```
 
