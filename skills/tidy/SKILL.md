@@ -1,4 +1,5 @@
 ---
+name: memory-tidy
 description: "Tidy memory files — extract oversized sections, detect stale counts"
 ---
 

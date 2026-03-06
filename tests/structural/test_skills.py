@@ -23,8 +23,8 @@ def test_skill_count(skills_dir):
         d for d in skills_dir.iterdir()
         if d.is_dir() and (d / "SKILL.md").exists()
     )
-    assert len(dirs) == 1, (
-        f"Expected 1 skills, found {len(dirs)}: {[d.name for d in dirs]}"
+    assert len(dirs) == 2, (
+        f"Expected 2 skills, found {len(dirs)}: {[d.name for d in dirs]}"
     )
 
 
@@ -33,4 +33,7 @@ def test_skill_has_frontmatter(skill_dir):
     """Each SKILL.md has valid YAML frontmatter with 'name' and 'description'."""
     fm, _ = parse_frontmatter(skill_dir / "SKILL.md")
     assert fm is not None, f"{skill_dir.name}/SKILL.md has no frontmatter"
-    assert "description" in fm, f"{skill_dir.name}/SKILL.md frontmatter missing 'description'"
+    assert fm.get("name"), f"{skill_dir.name}/SKILL.md frontmatter missing 'name'"
+    assert fm.get("description"), (
+        f"{skill_dir.name}/SKILL.md frontmatter missing 'description'"
+    )
