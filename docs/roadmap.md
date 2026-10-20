@@ -1,9 +1,9 @@
 # intermem Roadmap
 
-> Auto-generated from beads on 2026-02-25. Strategic context: [Demarch Roadmap](../../../docs/demarch-roadmap.md)
+> Generated from the issue tracker on 2026-02-25.
 
 ## Blocked
 
-- [● P2] iv-bn4j: [intermem] F4: One-shot tiered migration — --migrate-to-tiered
-- [● P3] iv-y5tv: [intermem] Phase 4: Consolidation — Compound/Interfluence write through intermem
+- [● P2] [intermem] F4: One-shot tiered migration — --migrate-to-tiered
+- [● P3] [intermem] Phase 4: Consolidation — Compound/Interfluence write through intermem
 
