@@ -114,3 +114,48 @@ def test_run_check_never_modifies_note(tmp_path):
 
 def test_sha_not_confused_for_card():
     assert not [c for c in extract_claims("uses SHA-256 and UTF-8") if c.kind == "card"]
+
+
+def test_imperative_and_conditional_are_not_assertions():
+    res = _res(pr={f"{R}#5": {"state": "MERGED", "mergedAt": "x", "headRefOid": "aaaaaaa1"}})
+    for t in ("acme/widget#5, open the dashboard", "acme/widget#5 if open, investigate",
+              "acme/widget#5 not head 1234567"):
+        assert all(r.verdict in (NOASSERT, UNRESOLVED) or r.claim.kind == "pr" and r.verdict == NOASSERT
+                   for r in _verdicts(t, res)), t
+        assert not [r for r in _verdicts(t, res) if r.verdict == STALE], t
+
+
+def test_wait_negation_and_clauses(tmp_path):
+    wf = tmp_path / "waits.json"
+    wf.write_text(json.dumps({"waits": [{"id": "wait-abcd", "resolved_at": "t"}]}))
+    for t in ("wait-abcd is not open", "wait-abcd resolved; PR 5 open",
+              "if wait-abcd is open, check later"):
+        assert check_waits(t, wf) == [], t
+    assert len(check_waits("wait-abcd is open", wf)) == 1
+
+
+def test_hash_binds_to_nearest_path_or_none():
+    a = "a" * 64
+    one = extract_claims(f"/tmp/first /tmp/second sha256 {a}")
+    assert one[0].ref == "/tmp/second"
+    amb = extract_claims(f"/tmp/a sha256 {a} and /tmp/b")
+    assert amb[0].ref in ("/tmp/a", "")  # ambiguous allowed to be unbound
+    tie = extract_claims(f"/tmp/aaaa sha256 {a} /tmp/bbbb")
+    assert tie[0].ref == ""
+
+
+def test_out_cannot_be_hardlink_of_note(tmp_path, monkeypatch, capsys):
+    import os, sys
+    from intermem import __main__ as m
+    note = tmp_path / "n.md"
+    note.write_text("acme/widget#5 open\n")
+    link = tmp_path / "l.md"
+    os.link(note, link)
+    monkeypatch.setattr(sys, "argv", ["intermem", "handoff-check", str(note), "--out", str(link)])
+    monkeypatch.setattr("intermem.handoffcheck.default_resolvers",
+                        lambda *_a, **_k: _res(pr={f"{R}#5": {"state": "OPEN"}}))
+    try:
+        m.main()
+    except SystemExit as e:
+        assert e.code == 2
+    assert note.read_text() == "acme/widget#5 open\n"

@@ -80,23 +80,21 @@ class Resolvers:
 
 # ---- extraction --------------------------------------------------------
 
+_COPULA = r"(?:(?:is|are|was|were|now|still|has\s+been|been|got)\s+)*"
+_AFTER_STATE = (r"(?=\s*(?:$|[,.;)\]]|\band\b|\bbut\b|\bor\b|\bsince\b|\bon\b|\bat\b|"
+                r"\bas\s+of\b|\bwith\b|\bby\b|\bin\b|[(]|[-\u2014]|[0-9a-f]{7,}\b))")
+
+
 def _state_after(segment: str, table: dict[str, str], before: str) -> Optional[str]:
-    """First state word in ``segment`` (text after a reference), unless the
-    reference is conditional ("until PR 3 merges") or the word is negated."""
+    """State word directly after a reference ("X is open", "X merged"), with
+    only a copula between. Words further along, conditionals ("if X open"),
+    negation and imperatives ("open the dashboard") are not assertions."""
     if _CONDITIONAL.search(before):
         return None
-    # The state word must sit within the first three words after the
-    # reference and before any sentence end, so prose further along is ignored.
-    segment = re.split(r"[.;:]\s|[.;]$|\n", segment, maxsplit=1)[0]
-    for i, m in enumerate(re.finditer(r"[A-Za-z_]+", segment[:60])):
-        if i >= 3:
-            break
-        word = m.group(0).lower()
-        if word in table:
-            if _NEGATION.search(segment[: m.start()]):
-                return None
-            return table[word]
-    return None
+    words = "|".join(sorted(map(re.escape, table), key=len, reverse=True))
+    m = re.match(r"[\s:,(=\-]*" + _COPULA + r"(" + words + r")\b" + _AFTER_STATE,
+                 segment, re.IGNORECASE)
+    return table[m.group(1).lower()] if m else None
 
 
 def extract_claims(text: str, bead_prefixes: tuple[str, ...] = ("mk",),
@@ -132,13 +130,25 @@ def extract_claims(text: str, bead_prefixes: tuple[str, ...] = ("mk",),
             claims.append(Claim(kind, ref, lineno, asserted, line.strip()[:160]))
             if kind == "pr":
                 hm = _HEAD_RE.search(seg)
-                if hm and not _CONDITIONAL.search(before):
+                if hm and not _CONDITIONAL.search(before) and not re.search(
+                        r"[.;]|\b(?:not|never|if|until|was|were|unless)\b", seg[:hm.start()],
+                        re.IGNORECASE):
                     claims.append(Claim("pr-head", ref, lineno, hm.group(1).lower(),
                                         line.strip()[:160]))
         for hm in _SHA256_RE.finditer(line):
-            paths = [p for p in _PATH_RE.findall(line) if "/" in p[1:]]
-            claims.append(Claim("hash", paths[0] if paths else "", lineno,
-                                hm.group(1).lower(), line.strip()[:160]))
+            paths = [m for m in _PATH_RE.finditer(line) if "/" in m.group(1)[1:]]
+            ref = ""
+            if len(paths) == 1:
+                ref = paths[0].group(1)
+            elif paths:
+                # Several paths: bind to the nearest one, but only if it is
+                # clearly nearer than the runner-up; otherwise leave unbound.
+                def dist(m):
+                    return hm.start() - m.end() if m.end() <= hm.start() else m.start() - hm.end()
+                ranked = sorted(paths, key=dist)
+                if dist(ranked[1]) - dist(ranked[0]) >= 10:
+                    ref = ranked[0].group(1)
+            claims.append(Claim("hash", ref, lineno, hm.group(1).lower(), line.strip()[:160]))
     return claims
 
 
@@ -227,13 +237,15 @@ def check_waits(text: str, waits_path: Path) -> list[Result]:
         return []
     waits = data.get("waits", []) if isinstance(data, dict) else []
     out: list[Result] = []
-    open_word = re.compile(r"\b(open|waiting|pending)\b", re.IGNORECASE)
     for lineno, line in enumerate(text.splitlines(), 1):
         for w in waits:
             wid = str(w.get("id", ""))
             if len(wid) < 4 or not w.get("resolved_at"):
                 continue
-            if re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(wid), line) and open_word.search(line):
+            m = re.search(
+                r"(?<![\w-])%s(?![\w-])[\s:,(=\-]*%s(open|waiting|pending)\b%s"
+                % (re.escape(wid), _COPULA, _AFTER_STATE), line, re.IGNORECASE)
+            if m and not _CONDITIONAL.search(line[max(0, m.start() - 40):m.start()]):
                 c = Claim("wait", wid, lineno, "open", line.strip()[:160])
                 out.append(Result(c, STALE, "resolved", f"resolved_at {w['resolved_at']}"))
     return out

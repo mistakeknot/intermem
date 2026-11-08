@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -110,7 +111,7 @@ def main() -> None:
         else:
             body = render_report(args.note, results)
         if args.out:
-            if args.out.resolve() == args.note.resolve():
+            if args.out.exists() and os.path.samefile(args.out, args.note):
                 print("Error: --out must not be the note itself", file=sys.stderr)
                 sys.exit(2)
             args.out.write_text(body + "\n")
