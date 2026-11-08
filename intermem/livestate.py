@@ -16,19 +16,22 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-_PR_URL_RE = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+_PR_URL_RE = re.compile(r"(?<![\w.-])github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
 _PR_SLUG_RE = re.compile(r"(?<![\w/.-])([\w.-]+/[\w.-]+)#(\d+)\b")
 _PR_BARE_RE = re.compile(r"\bPR\s*#?(\d+)\b", re.IGNORECASE)
 _CARD_RE = re.compile(r"\b([A-Z]{2,6}-\d+)\b")
 _CARD_STOP = {"SHA", "UTF", "TLS", "RFC", "ISO", "HTTP", "GPT", "AES", "CVE", "P"}
 _THREAD_RE = re.compile(r"\b(thr_[a-z0-9]{10})\b")
 _PATH_RE = re.compile(r"(?<![\w])((?:~|/)[\w./~+-]*[\w])")
+_WAIT_RE = re.compile(r"(?<![\w-])([a-z]+(?:-[\w.]+)+-[0-9a-f]{8})(?![\w-])")
+_MAX_HASH_BYTES = 64 * 1024 * 1024
 _SHA_WORD_RE = re.compile(r"sha-?256", re.IGNORECASE)
 
 UNRESOLVED = "unresolved"
@@ -142,26 +145,38 @@ def resolve_refs(refs: list[tuple[str, str, int]], res: Resolvers) -> list[Ref]:
 
 
 def wait_refs(text: str, waits_path: Path) -> list[Ref]:
-    """Waits from waits.json whose id appears in the note."""
+    """Wait ids in the note, looked up in waits.json.
+
+    An id that looks like a wait id but is not in the registry, or any id when
+    the registry cannot be read, is shown as unresolved.
+    """
+    lines = text.splitlines()
     try:
         data = json.loads(waits_path.read_text())
     except (OSError, ValueError):
-        return []
+        data = None
     items = data.get("waits") if isinstance(data, dict) else None
-    if not isinstance(items, list):
-        return []
-    lines = text.splitlines()
+    known: dict[str, dict] = {}
+    if isinstance(items, list):
+        for w in items:
+            if isinstance(w, dict) and isinstance(w.get("id"), str) and w["id"]:
+                known[w["id"]] = w
     out: list[Ref] = []
-    for w in items:
-        wid = w.get("id") if isinstance(w, dict) else None
-        if not isinstance(wid, str) or not wid:
-            continue
-        pat = re.compile(r"(?<![\w-])" + re.escape(wid) + r"(?![\w-])")
-        for n, line in enumerate(lines, 1):
-            if pat.search(line):
-                state = f"resolved {w['resolved_at']}" if w.get("resolved_at") else "open"
-                out.append(Ref("wait", wid, n, state, f"{w.get('kind', '')} {w.get('ref', '')}".strip()))
-                break
+    done: set[str] = set()
+    for n, line in enumerate(lines, 1):
+        cands = [m.group(1) for m in _WAIT_RE.finditer(line)]
+        cands += [wid for wid in known if wid not in cands and re.search(
+            r"(?<![\w-])" + re.escape(wid) + r"(?![\w-])", line)]
+        for wid in cands:
+            if wid in done:
+                continue
+            done.add(wid)
+            w = known.get(wid)
+            if w is None:
+                out.append(Ref("wait", wid, n, UNRESOLVED))
+                continue
+            state = f"resolved {w['resolved_at']}" if w.get("resolved_at") else "open"
+            out.append(Ref("wait", wid, n, state, f"{w.get('kind', '')} {w.get('ref', '')}".strip()))
     return out
 
 
@@ -206,8 +221,18 @@ def default_resolvers(bd_dir: Optional[str] = None) -> Resolvers:
         return t if isinstance(t, dict) else None
 
     def file_sha256(path: str) -> Optional[str]:
+        # Regular files only, bounded size, hashed in chunks: the path comes
+        # from the note, so a device or FIFO must not hang or exhaust memory.
         try:
-            return hashlib.sha256(Path(path).expanduser().read_bytes()).hexdigest()
+            p = Path(path).expanduser()
+            if not stat.S_ISREG(p.stat().st_mode) or p.stat().st_size > _MAX_HASH_BYTES:
+                return None
+            h = hashlib.sha256()
+            fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            return h.hexdigest()
         except OSError:
             return None
 

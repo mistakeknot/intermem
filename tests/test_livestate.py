@@ -157,3 +157,35 @@ def test_write_report_rejects_same_file(tmp_path):
     with pytest.raises(ValueError):
         write_report(note, note, "y")
     assert note.read_text() == "x"
+
+
+def test_missing_wait_and_bad_registry_are_unresolved(tmp_path):
+    wid = "pr-acme-widget-5-0123abcd"
+    wf = tmp_path / "w.json"
+    wf.write_text(json.dumps({"waits": []}))
+    assert [(r.ref, r.state) for r in wait_refs(f"see {wid}", wf)] == [(wid, UNRESOLVED)]
+    wf.write_text("not json")
+    assert [(r.ref, r.state) for r in wait_refs(f"see {wid}", wf)] == [(wid, UNRESOLVED)]
+
+
+def test_pr_url_requires_github_host():
+    assert _kinds("https://notgithub.com/acme/widget/pull/12") == []
+    assert _kinds("https://evil.github.com/acme/widget/pull/12") == []
+    assert _kinds("https://github.com/acme/widget/pull/12") == [("pr", "acme/widget#12")]
+
+
+def test_file_hash_skips_devices_fifos_and_big_files(tmp_path, monkeypatch):
+    from intermem import livestate
+    h = livestate.default_resolvers().file_sha256
+    assert h("/dev/zero") is None
+    fifo = tmp_path / "f"
+    os.mkfifo(fifo)
+    assert h(str(fifo)) is None
+    big = tmp_path / "b"
+    big.write_bytes(b"x" * 10)
+    monkeypatch.setattr(livestate, "_MAX_HASH_BYTES", 5)
+    assert h(str(big)) is None
+    ok = tmp_path / "ok"
+    ok.write_bytes(b"abc")
+    monkeypatch.setattr(livestate, "_MAX_HASH_BYTES", 100)
+    assert h(str(ok)) == __import__("hashlib").sha256(b"abc").hexdigest()
