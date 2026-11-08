@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 from intermem.journal import PromotionJournal
@@ -115,11 +116,19 @@ def main() -> None:
                     args.out.exists() and os.path.samefile(args.out, args.note)):
                 print("Error: --out must not be the note itself", file=sys.stderr)
                 sys.exit(2)
-            # Write to a temp file and rename, so an existing hard link or
-            # symlink at --out is replaced, never truncated in place.
-            tmp = args.out.with_name(args.out.name + f".tmp{os.getpid()}")
-            tmp.write_text(body + "\n")
-            os.replace(tmp, args.out)
+            # Exclusive temp file in the output directory, then rename: a
+            # hard link or symlink at --out is replaced, never truncated, and
+            # no predictable temp name can alias the note.
+            fd, tmp_name = tempfile.mkstemp(dir=args.out.resolve().parent, prefix=".hc-", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(body + "\n")
+                os.chmod(tmp_name, 0o644)
+                os.replace(tmp_name, args.out)
+            except BaseException:
+                if os.path.exists(tmp_name):
+                    os.unlink(tmp_name)
+                raise
         else:
             print(body)
         sys.exit(1 if any(r.verdict == STALE for r in results) else 0)

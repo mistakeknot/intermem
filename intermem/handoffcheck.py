@@ -5,9 +5,9 @@ task-card status, file hashes, open waits) against their live source and
 reports which ones no longer hold. It is read-only: the note is never
 modified, and the report is written elsewhere (stdout or ``--out``).
 
-A claim is only flagged STALE when the note asserts something specific (a
-state word or a hash right next to the reference) and the live source says
-otherwise. A reference with no assertion is reported as NOASSERT; a lookup
+A claim is only flagged STALE when the note states it in an explicit form
+("REF: merged", "REF (closed)", "REF: head SHA", a line holding just
+"PATH sha256 HEX") and the live source says otherwise; free text is ignored. A reference with no assertion is reported as NOASSERT; a lookup
 that fails is UNRESOLVED. Neither counts as stale.
 """
 
@@ -80,29 +80,24 @@ class Resolvers:
 
 # ---- extraction --------------------------------------------------------
 
-_COPULA = r"(?:(?:is|are|was|were|now|still|has\s+been|been|got)\s+)*"
-_AFTER_STATE = (r"(?=\s*(?:$|[,.;)\]]|\band\b|\bbut\b|\bsince\b|\bon\b|\bat\b|"
-                r"\bas\s+of\b|\bwith\b|\bby\b|\bin\b|[(]|[-\u2014]|[0-9a-f]{7,}\b))")
+# Only explicit forms count as an assertion (option B: no free-text matching):
+#   REF: STATE        REF (STATE)        REF: head SHA        REF (STATE, head SHA)
+# and nothing else on the clause. "REF open or closed?", "REF open, if CI
+# passes" and "REF open the dashboard" are therefore never assertions.
+_TAIL = r"\s*\)?\s*(?:$|[.;](?:\s|$))"
 
 
-def _state_after(segment: str, table: dict[str, str], before: str) -> Optional[str]:
-    """State word directly after a reference ("X is open", "X merged"), with
-    only a copula between. Words further along, conditionals ("if X open"),
-    negation and imperatives ("open the dashboard") are not assertions."""
-    if _CONDITIONAL.search(before) or "?" in segment.split(".")[0]:
-        return None
+def _explicit(seg: str, table: dict[str, str]) -> Optional[tuple[Optional[str], Optional[str]]]:
+    """Parse the text right after a reference. Returns (state, head) when it
+    is exactly one of the explicit forms, else None."""
     words = "|".join(sorted(map(re.escape, table), key=len, reverse=True))
-    m = re.match(r"[\s:,(=\-]*" + _COPULA + r"(" + words + r")\b" + _AFTER_STATE,
-                 segment, re.IGNORECASE)
-    return table[m.group(1).lower()] if m else None
-
-
-def _head_owned(prefix: str, table: dict[str, str]) -> bool:
-    """The head belongs to the PR only when just state words and light
-    connectives sit between the reference and "head"."""
-    ok = set(table) | {"is", "now", "at", "with", "on", "still", "was"}
-    ok.discard("was")
-    return all(w.lower() in ok for w in re.findall(r"[A-Za-z_]+", prefix)) and not re.search(r"[.;?]", prefix)
+    m = re.match(
+        r"\s*[:(]\s*(?:(?P<st>%s)\b)?(?:\s*,\s*)?(?:head\s+`?(?P<hd>[0-9a-f]{7,40})`?)?%s"
+        % (words, _TAIL), seg, re.IGNORECASE)
+    if not m or not (m.group("st") or m.group("hd")):
+        return None
+    st = table[m.group("st").lower()] if m.group("st") else None
+    return st, (m.group("hd").lower() if m.group("hd") else None)
 
 
 def extract_claims(text: str, bead_prefixes: tuple[str, ...] = ("mk",),
@@ -111,54 +106,38 @@ def extract_claims(text: str, bead_prefixes: tuple[str, ...] = ("mk",),
         r"\b((?:%s)-[a-z0-9]{3,6}(?:\.\d+)*)\b" % "|".join(map(re.escape, bead_prefixes)))
     claims: list[Claim] = []
     for lineno, line in enumerate(text.splitlines(), 1):
-        refs: list[tuple[int, int, str, str, str]] = []  # start, end, kind, ref, extra
+        refs: list[tuple[int, int, str, str]] = []  # start, end, kind, ref
         for m in _PR_URL_RE.finditer(line):
-            refs.append((m.start(), m.end(), "pr", f"{m.group(1)}#{m.group(2)}", ""))
+            refs.append((m.start(), m.end(), "pr", f"{m.group(1)}#{m.group(2)}"))
         for m in _PR_SLUG_RE.finditer(line):
             if not any(s <= m.start() < e for s, e, *_ in refs):
-                refs.append((m.start(), m.end(), "pr", f"{m.group(1)}#{m.group(2)}", ""))
+                refs.append((m.start(), m.end(), "pr", f"{m.group(1)}#{m.group(2)}"))
         for m in _PR_BARE_RE.finditer(line):
             if default_repo and not any(s <= m.start() < e for s, e, *_ in refs):
-                refs.append((m.start(), m.end(), "pr", f"{default_repo}#{m.group(1)}", ""))
+                refs.append((m.start(), m.end(), "pr", f"{default_repo}#{m.group(1)}"))
         for m in bead_re.finditer(line):
-            refs.append((m.start(), m.end(), "bead", m.group(1), ""))
+            refs.append((m.start(), m.end(), "bead", m.group(1)))
         for m in _CARD_RE.finditer(line):
-            if m.group(1).split("-")[0] in _CARD_STOP:
+            pre = m.group(1).split("-")[0]
+            if pre in _CARD_STOP or pre.lower() in {p.lower() for p in bead_prefixes}:
                 continue
-            if m.group(1).split("-")[0].lower() in {p.lower() for p in bead_prefixes}:
-                continue
-            refs.append((m.start(), m.end(), "card", m.group(1), ""))
+            refs.append((m.start(), m.end(), "card", m.group(1)))
         refs.sort()
-        for i, (s, e, kind, ref, _) in enumerate(refs):
-            nxt = refs[i + 1][0] if i + 1 < len(refs) else len(line)
-            seg = line[e:nxt]
-            before = line[max(0, s - 40):s]
+        short = line.strip()[:160]
+        for s, e, kind, ref in refs:
             table = {"pr": _PR_STATES, "bead": _BEAD_STATES, "card": _CARD_STATES}[kind]
-            asserted = _state_after(seg, table, before)
-            claims.append(Claim(kind, ref, lineno, asserted, line.strip()[:160]))
-            if kind == "pr":
-                hm = _HEAD_RE.search(seg)
-                if hm and not _CONDITIONAL.search(before) and _head_owned(seg[:hm.start()], table):
-                    claims.append(Claim("pr-head", ref, lineno, hm.group(1).lower(),
-                                        line.strip()[:160]))
-        for hm in _SHA256_RE.finditer(line):
-            if _CONDITIONAL.search(line[max(0, hm.start() - 60):hm.start()]) or re.search(
-                    r"^\W*(?:is\s+)?(?:incorrect|wrong|stale|outdated|obsolete|old|changed|mismatch|differs?)\b",
-                    line[hm.end():hm.end() + 40], re.IGNORECASE):
-                continue
-            paths = [m for m in _PATH_RE.finditer(line) if "/" in m.group(1)[1:]]
-            ref = ""
-            if len(paths) == 1:
-                ref = paths[0].group(1)
-            elif paths:
-                # Several paths: bind to the nearest one, but only if it is
-                # clearly nearer than the runner-up; otherwise leave unbound.
-                def dist(m):
-                    return hm.start() - m.end() if m.end() <= hm.start() else m.start() - hm.end()
-                ranked = sorted(paths, key=dist)
-                if dist(ranked[1]) - dist(ranked[0]) >= 10:
-                    ref = ranked[0].group(1)
-            claims.append(Claim("hash", ref, lineno, hm.group(1).lower(), line.strip()[:160]))
+            parsed = None if _CONDITIONAL.search(line[max(0, s - 40):s]) else _explicit(line[e:], table)
+            st, hd = parsed if parsed else (None, None)
+            claims.append(Claim(kind, ref, lineno, st, short))
+            if kind == "pr" and hd:
+                claims.append(Claim("pr-head", ref, lineno, hd, short))
+        # A hash claim is a line holding only a path and "sha256 HEX".
+        hm = re.match(
+            r"^[\s\-*>`]*(?:(?P<p1>(?:~|/)[\w./~+-]*\w)\s*[:=]?\s*)?sha256[\s:=`]*(?P<h>[0-9a-f]{12,64})`?"
+            r"(?:\s*[:=]?\s*(?P<p2>(?:~|/)[\w./~+-]*\w))?[\s`.]*$", line, re.IGNORECASE)
+        if hm and (hm.group("p1") or hm.group("p2")) and not (hm.group("p1") and hm.group("p2")):
+            claims.append(Claim("hash", hm.group("p1") or hm.group("p2"), lineno,
+                                hm.group("h").lower(), short))
     return claims
 
 
@@ -253,8 +232,8 @@ def check_waits(text: str, waits_path: Path) -> list[Result]:
             if len(wid) < 4 or not w.get("resolved_at"):
                 continue
             m = re.search(
-                r"(?<![\w-])%s(?![\w-])[\s:,(=\-]*%s(open|waiting|pending)\b%s"
-                % (re.escape(wid), _COPULA, _AFTER_STATE), line, re.IGNORECASE)
+                r"(?<![\w-])%s(?![\w-])\s*[:(]\s*(open|waiting|pending)\b%s"
+                % (re.escape(wid), _TAIL), line, re.IGNORECASE)
             if m and not _CONDITIONAL.search(line[max(0, m.start() - 40):m.start()]):
                 c = Claim("wait", wid, lineno, "open", line.strip()[:160])
                 out.append(Result(c, STALE, "resolved", f"resolved_at {w['resolved_at']}"))
