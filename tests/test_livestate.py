@@ -171,7 +171,9 @@ def test_missing_wait_and_bad_registry_are_unresolved(tmp_path):
 def test_pr_url_requires_github_host():
     assert _kinds("https://notgithub.com/acme/widget/pull/12") == []
     assert _kinds("https://evil.github.com/acme/widget/pull/12") == []
+    assert _kinds("https://evil.example/github.com/acme/widget/pull/12") == []
     assert _kinds("https://github.com/acme/widget/pull/12") == [("pr", "acme/widget#12")]
+    assert _kinds("see github.com/acme/widget/pull/12.") == [("pr", "acme/widget#12")]
 
 
 def test_file_hash_skips_devices_fifos_and_big_files(tmp_path, monkeypatch):

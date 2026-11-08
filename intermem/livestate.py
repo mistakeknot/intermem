@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-_PR_URL_RE = re.compile(r"(?<![\w.-])github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+_PR_URL_RE = re.compile(r"(?:https?://(?:www\.)?|(?<![\w./:-]))github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
 _PR_SLUG_RE = re.compile(r"(?<![\w/.-])([\w.-]+/[\w.-]+)#(\d+)\b")
 _PR_BARE_RE = re.compile(r"\bPR\s*#?(\d+)\b", re.IGNORECASE)
 _CARD_RE = re.compile(r"\b([A-Z]{2,6}-\d+)\b")
@@ -229,8 +229,12 @@ def default_resolvers(bd_dir: Optional[str] = None) -> Resolvers:
                 return None
             h = hashlib.sha256()
             fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
+            seen = 0
             with os.fdopen(fd, "rb") as fh:
                 for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    seen += len(chunk)
+                    if seen > _MAX_HASH_BYTES:
+                        return None
                     h.update(chunk)
             return h.hexdigest()
         except OSError:
