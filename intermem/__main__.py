@@ -80,7 +80,43 @@ def main() -> None:
     tidy_parser.add_argument("--section-threshold", type=int, default=15, help="Min section size to extract (default: 15)")
     tidy_parser.add_argument("--apply", action="store_true", help="Apply changes (default: dry-run)")
 
+    hc_parser = subparsers.add_parser(
+        "handoff-check", parents=[sub_shared],
+        help="Re-check PR/bead/card/hash/wait claims in a handoff note (read-only)")
+    hc_parser.add_argument("note", type=Path, help="Handoff note to check (never modified)")
+    hc_parser.add_argument("--repo", default=None, help="OWNER/REPO for bare 'PR N' references")
+    hc_parser.add_argument("--bead-prefix", action="append", default=None,
+                           help="Bead ID prefix (repeatable, default: mk)")
+    hc_parser.add_argument("--bd-dir", default=None, help="Directory to run bd from (its .beads)")
+    hc_parser.add_argument("--waits", type=Path, default=None, help="waits.json to check wait claims against")
+    hc_parser.add_argument("--out", type=Path, default=None, help="Write the report here instead of stdout")
+
     args = parser.parse_args()
+
+    if args.command == "handoff-check":
+        from intermem.handoffcheck import STALE, default_resolvers, render_report, run_check
+        if not args.note.is_file():
+            print(f"Error: {args.note} is not a file", file=sys.stderr)
+            sys.exit(2)
+        results = run_check(
+            args.note, default_resolvers(args.bd_dir),
+            bead_prefixes=tuple(args.bead_prefix or ["mk"]),
+            default_repo=args.repo, waits=args.waits)
+        if args.json:
+            body = json.dumps([
+                {"line": r.claim.line, "kind": r.claim.kind, "ref": r.claim.ref,
+                 "asserted": r.claim.asserted, "verdict": r.verdict,
+                 "actual": r.actual, "detail": r.detail} for r in results], indent=2)
+        else:
+            body = render_report(args.note, results)
+        if args.out:
+            if args.out.resolve() == args.note.resolve():
+                print("Error: --out must not be the note itself", file=sys.stderr)
+                sys.exit(2)
+            args.out.write_text(body + "\n")
+        else:
+            print(body)
+        sys.exit(1 if any(r.verdict == STALE for r in results) else 0)
 
     project_dir = args.project_dir.resolve()
     project_root = args.project_root.resolve() if args.project_root else project_dir

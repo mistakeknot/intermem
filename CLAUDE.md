@@ -8,7 +8,7 @@ Memory synthesis plugin — graduates stable auto-memory facts to curated refere
 - **Library**: `intermem/` (Python, run via `uv run`)
 - **State directory**: `.intermem/` in target project root
 - **Skills**: `/intermem:synthesize`, `/intermem:validate`, `/intermem:tidy`
-- **CLI**: `uv run python -m intermem [--flags] [sweep|query|tidy]`
+- **CLI**: `uv run python -m intermem [--flags] [sweep|query|tidy|handoff-check]`
 
 ## Architecture
 
@@ -26,6 +26,7 @@ Secondary pipeline (Phase 2A): sweep → decay → demotion → (re-promotion on
 - `intermem/pruner.py` — Remove promoted entries from auto-memory
 - `intermem/journal.py` — WAL-style promotion/demotion journal for atomicity
 - `intermem/tidy.py` — Structural tidy: section extraction to topic files, stale count detection
+- `intermem/handoffcheck.py` — Read-only stale-claim check: re-checks PR, bead, card, hash and wait claims in a handoff note against live sources; never edits the note
 - `intermem/_util.py` — Shared utilities: `hash_entry()`, `hash_content()`, `normalize_content()`
 
 ## CLI Subcommands
@@ -35,6 +36,7 @@ Secondary pipeline (Phase 2A): sweep → decay → demotion → (re-promotion on
 - `intermem query --topics` — List topic sections with entry counts and avg confidence
 - `intermem query --demoted` — Show demoted entries
 - `intermem tidy [--budget N] [--section-threshold N] [--apply]` — Structural tidy: extract oversized sections to topic files, detect stale counts
+- `intermem handoff-check NOTE [--repo OWNER/REPO] [--bd-dir DIR] [--waits waits.json] [--out FILE]` — Report claims that no longer hold (STALE), with evidence. Exit 1 if any are stale. A reference with no state word beside it is NOASSERT, a failed lookup UNRESOLVED; neither is flagged. Run by hand; no hook.
 - No subcommand — backward-compatible synthesis mode (all existing flags work)
 
 ## State Files
