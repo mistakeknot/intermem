@@ -19,6 +19,7 @@ Secondary pipeline (Phase 2A): sweep → decay → demotion → (re-promotion on
 - `intermem/scanner.py` — Parse auto-memory markdown into structured entries
 - `intermem/stability.py` — Per-entry content hashing across snapshots
 - `intermem/citations.py` — Citation extraction, path resolution, validation, confidence scoring (pure functions)
+- `intermem/livestate.py` — Live-state list for a handoff note: each PR/bead/card/thread/wait/file-hash reference with its current state, no verdicts, read-only
 - `intermem/metadata.py` — SQLite store for entry provenance, citations, audit checks, stale_streak, demotion
 - `intermem/validator.py` — Validation pipeline + decay penalty + sweep: `validate_and_filter_entries()`, `validate_promoted()`, `apply_decay_penalty()`, `sweep_all_entries()`
 - `intermem/dedup.py` — Fuzzy matching against AGENTS.md/CLAUDE.md
@@ -35,6 +36,7 @@ Secondary pipeline (Phase 2A): sweep → decay → demotion → (re-promotion on
 - `intermem query --topics` — List topic sections with entry counts and avg confidence
 - `intermem query --demoted` — Show demoted entries
 - `intermem tidy [--budget N] [--section-threshold N] [--apply]` — Structural tidy: extract oversized sections to topic files, detect stale counts
+- `intermem live-state NOTE [--bd-dir DIR] [--waits waits.json] [--bead-prefix P] [--out FILE]` — List a handoff's references with their live state (run by hand at resume; PRs need `owner/repo#N`; never modifies the note)
 - No subcommand — backward-compatible synthesis mode (all existing flags work)
 
 ## State Files

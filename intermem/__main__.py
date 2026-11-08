@@ -80,7 +80,35 @@ def main() -> None:
     tidy_parser.add_argument("--section-threshold", type=int, default=15, help="Min section size to extract (default: 15)")
     tidy_parser.add_argument("--apply", action="store_true", help="Apply changes (default: dry-run)")
 
+    ls_parser = subparsers.add_parser(
+        "live-state", parents=[sub_shared],
+        help="List the references in a handoff note with their current state (read-only, run by hand)")
+    ls_parser.add_argument("note", type=Path, help="Handoff note (never modified)")
+    ls_parser.add_argument("--bead-prefix", action="append", default=None,
+                           help="Bead ID prefix (repeatable, default: mk)")
+    ls_parser.add_argument("--bd-dir", default=None, help="Directory to run bd from (its .beads)")
+    ls_parser.add_argument("--waits", type=Path, default=None, help="waits.json to look up wait ids in")
+    ls_parser.add_argument("--out", type=Path, default=None, help="Write the list here instead of stdout")
+
     args = parser.parse_args()
+
+    if args.command == "live-state":
+        from intermem.livestate import default_resolvers, render, run_live_state, write_report
+        if not args.note.is_file():
+            print(f"Error: {args.note} is not a file", file=sys.stderr)
+            sys.exit(2)
+        refs = run_live_state(args.note, default_resolvers(args.bd_dir),
+                              bead_prefixes=tuple(args.bead_prefix or ["mk"]), waits=args.waits)
+        body = render(args.note, refs)
+        if args.out:
+            try:
+                write_report(args.out, args.note, body)
+            except ValueError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                sys.exit(2)
+        else:
+            print(body, end="")
+        sys.exit(0)
 
     project_dir = args.project_dir.resolve()
     project_root = args.project_root.resolve() if args.project_root else project_dir
