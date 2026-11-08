@@ -81,7 +81,7 @@ class Resolvers:
 # ---- extraction --------------------------------------------------------
 
 _COPULA = r"(?:(?:is|are|was|were|now|still|has\s+been|been|got)\s+)*"
-_AFTER_STATE = (r"(?=\s*(?:$|[,.;)\]]|\band\b|\bbut\b|\bor\b|\bsince\b|\bon\b|\bat\b|"
+_AFTER_STATE = (r"(?=\s*(?:$|[,.;)\]]|\band\b|\bbut\b|\bsince\b|\bon\b|\bat\b|"
                 r"\bas\s+of\b|\bwith\b|\bby\b|\bin\b|[(]|[-\u2014]|[0-9a-f]{7,}\b))")
 
 
@@ -89,12 +89,20 @@ def _state_after(segment: str, table: dict[str, str], before: str) -> Optional[s
     """State word directly after a reference ("X is open", "X merged"), with
     only a copula between. Words further along, conditionals ("if X open"),
     negation and imperatives ("open the dashboard") are not assertions."""
-    if _CONDITIONAL.search(before):
+    if _CONDITIONAL.search(before) or "?" in segment.split(".")[0]:
         return None
     words = "|".join(sorted(map(re.escape, table), key=len, reverse=True))
     m = re.match(r"[\s:,(=\-]*" + _COPULA + r"(" + words + r")\b" + _AFTER_STATE,
                  segment, re.IGNORECASE)
     return table[m.group(1).lower()] if m else None
+
+
+def _head_owned(prefix: str, table: dict[str, str]) -> bool:
+    """The head belongs to the PR only when just state words and light
+    connectives sit between the reference and "head"."""
+    ok = set(table) | {"is", "now", "at", "with", "on", "still", "was"}
+    ok.discard("was")
+    return all(w.lower() in ok for w in re.findall(r"[A-Za-z_]+", prefix)) and not re.search(r"[.;?]", prefix)
 
 
 def extract_claims(text: str, bead_prefixes: tuple[str, ...] = ("mk",),
@@ -130,12 +138,14 @@ def extract_claims(text: str, bead_prefixes: tuple[str, ...] = ("mk",),
             claims.append(Claim(kind, ref, lineno, asserted, line.strip()[:160]))
             if kind == "pr":
                 hm = _HEAD_RE.search(seg)
-                if hm and not _CONDITIONAL.search(before) and not re.search(
-                        r"[.;]|\b(?:not|never|if|until|was|were|unless)\b", seg[:hm.start()],
-                        re.IGNORECASE):
+                if hm and not _CONDITIONAL.search(before) and _head_owned(seg[:hm.start()], table):
                     claims.append(Claim("pr-head", ref, lineno, hm.group(1).lower(),
                                         line.strip()[:160]))
         for hm in _SHA256_RE.finditer(line):
+            if _CONDITIONAL.search(line[max(0, hm.start() - 60):hm.start()]) or re.search(
+                    r"^\W*(?:is\s+)?(?:incorrect|wrong|stale|outdated|obsolete|old|changed|mismatch|differs?)\b",
+                    line[hm.end():hm.end() + 40], re.IGNORECASE):
+                continue
             paths = [m for m in _PATH_RE.finditer(line) if "/" in m.group(1)[1:]]
             ref = ""
             if len(paths) == 1:
@@ -225,7 +235,7 @@ def check_claims(claims: list[Claim], res: Resolvers) -> list[Result]:
             elif str(actual).startswith(c.asserted or "?"):
                 out.append(Result(c, CURRENT, str(actual)[:12]))
             else:
-                out.append(Result(c, STALE, str(actual)[:12], f"note says {(c.asserted or "")[:12]}"))
+                out.append(Result(c, STALE, str(actual)[:12], "note says " + (c.asserted or "")[:12]))
     return out
 
 

@@ -111,10 +111,15 @@ def main() -> None:
         else:
             body = render_report(args.note, results)
         if args.out:
-            if args.out.exists() and os.path.samefile(args.out, args.note):
+            if args.out.resolve() == args.note.resolve() or (
+                    args.out.exists() and os.path.samefile(args.out, args.note)):
                 print("Error: --out must not be the note itself", file=sys.stderr)
                 sys.exit(2)
-            args.out.write_text(body + "\n")
+            # Write to a temp file and rename, so an existing hard link or
+            # symlink at --out is replaced, never truncated in place.
+            tmp = args.out.with_name(args.out.name + f".tmp{os.getpid()}")
+            tmp.write_text(body + "\n")
+            os.replace(tmp, args.out)
         else:
             print(body)
         sys.exit(1 if any(r.verdict == STALE for r in results) else 0)

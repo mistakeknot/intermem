@@ -159,3 +159,38 @@ def test_out_cannot_be_hardlink_of_note(tmp_path, monkeypatch, capsys):
     except SystemExit as e:
         assert e.code == 2
     assert note.read_text() == "acme/widget#5 open\n"
+
+
+def test_questions_alternatives_and_foreign_heads():
+    res = _res(pr={f"{R}#5": {"state": "MERGED", "mergedAt": "x", "headRefOid": "aaaaaaa1"}})
+    assert not [r for r in _verdicts("acme/widget#5 open or closed?", res) if r.verdict == STALE]
+    out = _verdicts("acme/widget#5 open and the deployment head 1234567", res)
+    assert [r.claim.kind for r in out] == ["pr"]      # no pr-head claim extracted
+
+
+def test_hash_conditionals_and_disclaimers():
+    a = "a" * 64
+    assert extract_claims(f"if /tmp/a sha256 {a}") == []
+    assert extract_claims(f"/tmp/a sha256 {a} is incorrect") == []
+    assert extract_claims(f"/tmp/a sha256 {a}")[0].asserted == a
+
+
+def test_out_replaces_rather_than_truncates(tmp_path, monkeypatch):
+    import os, sys
+    from intermem import __main__ as m
+    note = tmp_path / "n.md"
+    note.write_text("acme/widget#5 open\n")
+    link = tmp_path / "l.md"
+    os.link(note, link)
+    other = tmp_path / "o.md"
+    other.write_text("x")
+    os.link(other, tmp_path / "o2.md")
+    monkeypatch.setattr(sys, "argv", ["intermem", "handoff-check", str(note), "--out", str(tmp_path / "o2.md")])
+    monkeypatch.setattr("intermem.handoffcheck.default_resolvers",
+                        lambda *_a, **_k: _res(pr={f"{R}#5": {"state": "OPEN"}}))
+    try:
+        m.main()
+    except SystemExit:
+        pass
+    assert other.read_text() == "x"            # old inode untouched
+    assert "Stale-claim check" in (tmp_path / "o2.md").read_text()
