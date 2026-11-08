@@ -23,13 +23,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-_PR_URL_RE = re.compile(r"(?:https?://(?:www\.)?|(?<![\w./:-]))github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+_PR_URL_RE = re.compile(r"(?<![\w./:-])(?:https?://(?:www\.)?)?github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
 _PR_SLUG_RE = re.compile(r"(?<![\w/.-])([\w.-]+/[\w.-]+)#(\d+)\b")
 _PR_BARE_RE = re.compile(r"\bPR\s*#?(\d+)\b", re.IGNORECASE)
 _CARD_RE = re.compile(r"\b([A-Z]{2,6}-\d+)\b")
 _CARD_STOP = {"SHA", "UTF", "TLS", "RFC", "ISO", "HTTP", "GPT", "AES", "CVE", "P"}
 _THREAD_RE = re.compile(r"\b(thr_[a-z0-9]{10})\b")
-_PATH_RE = re.compile(r"(?<![\w])((?:~|/)[\w./~+-]*[\w])")
+# absolute, ~/ or ./ ../ paths (relative ones resolve against the cwd)
+_PATH_RE = re.compile(r"(?<![\w.~/])((?:~|\.{1,2})?/[\w./~+-]*[\w])")
 _WAIT_RE = re.compile(r"(?<![\w-])([a-z]+(?:-[\w.]+)+-[0-9a-f]{8})(?![\w-])")
 _MAX_HASH_BYTES = 64 * 1024 * 1024
 _SHA_WORD_RE = re.compile(r"sha-?256", re.IGNORECASE)

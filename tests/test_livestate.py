@@ -191,3 +191,10 @@ def test_file_hash_skips_devices_fifos_and_big_files(tmp_path, monkeypatch):
     ok.write_bytes(b"abc")
     monkeypatch.setattr(livestate, "_MAX_HASH_BYTES", 100)
     assert h(str(ok)) == __import__("hashlib").sha256(b"abc").hexdigest()
+
+
+def test_nested_url_and_relative_paths():
+    assert _kinds("https://evil.example/https://github.com/acme/widget/pull/12") == []
+    assert _kinds("sha256 ./a/b.md") == [("file", "./a/b.md")]
+    assert _kinds("sha256 a/b.md") == []
+    assert _kinds("sha256 ~/x /abs/y") == [("file", "/abs/y"), ("file", "~/x")]
